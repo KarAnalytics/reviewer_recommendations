@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import requests
+from openpyxl.utils import get_column_letter
 
 HERE = Path(__file__).resolve().parent
 
@@ -193,6 +194,60 @@ def names_match(a: str, b: str) -> bool:
     if pa and pb and pa[-1] == pb[-1] and pa[0][:1] == pb[0][:1]:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Review-count sync -- keeps ReviewerList's No_reviews_assigned column live
+# ---------------------------------------------------------------------------
+REVIEW_COUNT_COLUMN = "No_reviews_assigned"
+_REQUIRED_REVIEWER_SLOT_COLS = ["Reviewer 1", "Reviewer 2", "Reviewer 3"]
+
+
+def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "ReviewerList") -> int:
+    """Write/refresh a live Excel formula in ReviewerList's
+    No_reviews_assigned column (creating the column if it doesn't exist
+    yet) for every reviewer row. The formula COUNTIFs that reviewer's name
+    across Submissions' Reviewer 1/2/3 columns, so it recalculates live in
+    Excel the instant those change -- no script needs to run again unless
+    new reviewer rows get added. Returns how many rows got a formula.
+
+    Silently does nothing (returns 0) if either sheet or the Reviewer
+    1/2/3 / Author columns aren't present, so callers can call this
+    opportunistically without extra guarding.
+    """
+    if sub_sheet not in wb.sheetnames or rev_sheet not in wb.sheetnames:
+        return 0
+    sub_ws = wb[sub_sheet]
+    rev_ws = wb[rev_sheet]
+
+    sub_header = {str(c.value).strip(): c.column for c in sub_ws[1] if c.value}
+    if any(c not in sub_header for c in _REQUIRED_REVIEWER_SLOT_COLS):
+        return 0
+
+    rev_header = {str(c.value).strip(): c.column for c in rev_ws[1] if c.value}
+    if "Author" not in rev_header:
+        return 0
+
+    count_col = rev_header.get(REVIEW_COUNT_COLUMN)
+    if not count_col:
+        count_col = (max(rev_header.values()) if rev_header else 0) + 1
+        rev_ws.cell(1, count_col).value = REVIEW_COUNT_COLUMN
+
+    r1, r2, r3 = (get_column_letter(sub_header[c]) for c in _REQUIRED_REVIEWER_SLOT_COLS)
+    author_letter = get_column_letter(rev_header["Author"])
+
+    n = 0
+    for r in range(2, rev_ws.max_row + 1):
+        name = rev_ws.cell(r, rev_header["Author"]).value
+        if not name or not str(name).strip():
+            continue
+        rev_ws.cell(r, count_col).value = (
+            f"=COUNTIF({sub_sheet}!{r1}:{r1},{author_letter}{r})"
+            f"+COUNTIF({sub_sheet}!{r2}:{r2},{author_letter}{r})"
+            f"+COUNTIF({sub_sheet}!{r3}:{r3},{author_letter}{r})"
+        )
+        n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------

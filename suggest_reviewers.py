@@ -3,10 +3,18 @@ each paper, ask the local Ollama model to pick the best-matching reviewers
 from ReviewerList, automatically excluding the paper's own authors (and
 anyone already entered as Reviewer 1/2/3 for that paper).
 
+A reviewer is also dropped from consideration once they've been suggested
+--max-per-reviewer times (default 5) across the whole run, so suggestions
+spread across the pool instead of a few well-matched people getting
+suggested for nearly every paper. This counts suggestions already sitting
+in AISuggestedReviewers from earlier runs too, so the cap holds even
+across repeated runs.
+
 Usage:
     python suggest_reviewers.py                  # fill blank AISuggestedReviewers cells only
     python suggest_reviewers.py --force           # recompute every paper's suggestions
     python suggest_reviewers.py --top-n 5         # how many reviewers to suggest (default 5)
+    python suggest_reviewers.py --max-per-reviewer 5  # suggestion cap per reviewer (default 5)
     python suggest_reviewers.py --workbook path\to\file.xlsx
 
 Run this any time you add new papers (or re-run enrich_reviewers.py) --
@@ -19,15 +27,17 @@ this script -- that's only for enrich_reviewers.py's web search.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
+from collections import Counter
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match, start_logging
+from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match, start_logging, sync_review_counts
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -80,6 +90,23 @@ def build_own_submission_index(sub_ws, sub_col: dict[str, int]) -> list[dict]:
             "authors": split_authors(str(sub_ws.cell(r, sub_col["Authors"]).value or "")),
         })
     return papers
+
+
+_SUGGESTION_LINE_RE = re.compile(r"^\s*\d+\.\s*(.+?)(?:\s+--\s+.*)?\s*$")
+
+
+def parse_suggested_names(cell_text) -> list[str]:
+    """Pull reviewer names back out of an AISuggestedReviewers cell written
+    by this script (numbered list, optionally "-- reason" per line).
+    """
+    if not cell_text:
+        return []
+    names = []
+    for line in str(cell_text).splitlines():
+        m = _SUGGESTION_LINE_RE.match(line)
+        if m:
+            names.append(m.group(1).strip())
+    return names
 
 
 def own_papers_for(name: str, all_papers: list[dict], exclude_row: int) -> list[dict]:
@@ -174,6 +201,9 @@ def main() -> None:
     ap.add_argument("--top-n", type=int, default=5)
     ap.add_argument("--force", action="store_true", help="recompute every paper, not just blank ones")
     ap.add_argument("--limit", type=int, default=None, help="only process the first N eligible papers")
+    ap.add_argument("--max-per-reviewer", type=int, default=5,
+                     help="drop a reviewer from consideration once they've been suggested "
+                          "this many times across the run (default 5); 0 disables the cap")
     args = ap.parse_args()
 
     wb = openpyxl.load_workbook(args.workbook)
@@ -189,6 +219,10 @@ def main() -> None:
         "Reviewer 1", "Reviewer 2", "Reviewer 3", "AISuggestedReviewers",
     ])
     rev_col = find_columns(rev_ws, ["Author", "Affiliation", "Position", "Interests"])
+
+    # Keep ReviewerList's No_reviews_assigned formulas in sync (adds the
+    # column if missing, fills it down into any newly-added reviewer rows).
+    sync_review_counts(wb)
 
     pool = load_reviewer_pool(rev_ws, rev_col)
     if not pool:
@@ -217,6 +251,21 @@ def main() -> None:
         print("(Pass --force to recompute everyone anyway.)")
         return
 
+    # Seed the per-reviewer suggestion cap from rows that WON'T be
+    # recomputed this run, so the cap holds correctly across repeated runs
+    # (and across --force, which regenerates the rows in `todo` from
+    # scratch rather than double-counting their old suggestions).
+    todo_set = set(todo)
+    suggestion_counts: Counter[str] = Counter()
+    if args.max_per_reviewer > 0:
+        pool_names = {c["name"].lower(): c["name"] for c in pool}
+        for r in range(2, sub_ws.max_row + 1):
+            if r in todo_set:
+                continue
+            for name in parse_suggested_names(sub_ws.cell(r, sub_col["AISuggestedReviewers"]).value):
+                canonical = pool_names.get(name.strip().lower(), name.strip())
+                suggestion_counts[canonical] += 1
+
     print(f"Suggesting reviewers for {len(todo)} paper(s)...")
     t0 = time.time()
     for i, r in enumerate(todo, 1):
@@ -236,6 +285,8 @@ def main() -> None:
         candidates = []
         for c in pool:
             if any(names_match(c["name"], ex) for ex in excluded_names):
+                continue
+            if args.max_per_reviewer > 0 and suggestion_counts[c["name"]] >= args.max_per_reviewer:
                 continue
             c = dict(c, own_papers=own_papers_for(c["name"], all_papers, exclude_row=r))
             candidates.append(c)
@@ -258,6 +309,8 @@ def main() -> None:
             for j, (name, reason) in enumerate(picks, 1)
         )
         sub_ws.cell(r, sub_col["AISuggestedReviewers"]).value = cell_text
+        for name, _reason in picks:
+            suggestion_counts[name] += 1
         print(f"{len(picks)} suggested")
 
         if i % SAVE_EVERY == 0:

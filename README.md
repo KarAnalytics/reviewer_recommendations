@@ -1,9 +1,10 @@
 # Reviewer recommendation tools
 
-Two scripts for conference track chairs: one fills in each reviewer's
-Position/Interests/Website from a web search, the other uses that (plus
-each paper's Keywords/Abstract) to suggest well-matched, non-conflicted
-reviewers for every submission.
+Three scripts for conference track chairs: one fills in each reviewer's
+Position/Interests/Website from a web search, one uses that (plus each
+paper's Keywords/Abstract) to suggest well-matched, non-conflicted, load-
+balanced reviewers for every submission, and one keeps a live
+"how many reviews is this person already on" count.
 
 Works on any conference's spreadsheet as long as it matches the format
 below -- nothing here is tied to a specific conference. Both scripts are
@@ -42,6 +43,7 @@ A single `.xlsx` workbook with two sheets (exact names, case-sensitive):
 | `Position` | Output column -- `enrich_reviewers.py` writes here |
 | `Interests` | Output column -- `enrich_reviewers.py` writes here |
 | `Website` | Output column -- `enrich_reviewers.py` writes here |
+| `No_reviews_assigned` | Output column, auto-created if missing -- `update_review_counts.py` (and `suggest_reviewers.py`, opportunistically) write a live formula here |
 
 Extra columns anywhere are ignored, so you can keep whatever else you
 already track (notes, review-request dates, etc.).
@@ -124,17 +126,58 @@ For every submitted paper with a blank `AISuggestedReviewers` cell, this:
   requests. Topical fit always comes first; a senior person who's clearly
   the best topical match still gets suggested.
 - Writes a numbered list (name + one-line reason) into `AISuggestedReviewers`.
+- Caps how many *papers* any one reviewer can be suggested for across the
+  whole run (default 5, `--max-per-reviewer`) -- once someone hits the
+  cap they're dropped from the candidate pool for the rest of the run, so
+  a handful of obviously well-matched people don't end up suggested for
+  nearly every paper. The count is seeded from suggestions already sitting
+  in `AISuggestedReviewers`, so the cap holds correctly even across
+  repeated runs, not just within one. Pass `--max-per-reviewer 0` to
+  disable it.
+- Also refreshes `ReviewerList.No_reviews_assigned` (see below) on every
+  run, so it stays in sync even if you never run `update_review_counts.py`
+  directly.
 
 ```
 python suggest_reviewers.py             # default: top 5 per paper
 python suggest_reviewers.py --top-n 3
+python suggest_reviewers.py --max-per-reviewer 8
 python suggest_reviewers.py --limit 2   # try it on 2 papers first
 ```
 
 Run this again whenever you add new papers -- it'll only compute
 suggestions for the new rows. Run it with `--force` if you want to
 recompute everyone (e.g. after re-running `enrich_reviewers.py` and getting
-better interest data).
+better interest data; this also fully recomputes the `--max-per-reviewer`
+counts from scratch across all papers, rather than adding on top of what
+was already there).
+
+Note the cap is about how many papers a reviewer gets *suggested* for --
+it's a different number from `No_reviews_assigned`, which counts how many
+papers a reviewer is *actually assigned* to (Reviewer 1/2/3). Being
+suggested doesn't use up review capacity; being assigned does.
+
+## 3. `update_review_counts.py` -- keep No_reviews_assigned in sync
+
+Writes a live Excel formula into each reviewer's `No_reviews_assigned`
+cell: `=COUNTIF(Submissions!<Reviewer 1 col>,...)` summed across Reviewer
+1/2/3. Because it's a formula, not a static number, it recalculates
+*itself* in Excel the instant a track chair types a name into Reviewer
+1/2/3 -- there's nothing to re-run after every assignment.
+
+```
+python update_review_counts.py
+```
+
+You only need to run this for first-time setup (adding the column) or
+after adding new rows to `ReviewerList` (to fill the formula into them) --
+`suggest_reviewers.py` also does this automatically on every run, so in
+practice you rarely need to call it directly.
+
+Note: `COUNTIF` does an exact (case-insensitive) text match, so a name
+typed into Reviewer 1/2/3 needs to be spelled exactly as it appears in
+`ReviewerList.Author` to be counted -- copying from `AISuggestedReviewers`
+or `ReviewerList` keeps this accurate.
 
 ## Notes
 

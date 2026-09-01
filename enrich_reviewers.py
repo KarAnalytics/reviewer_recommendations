@@ -1,6 +1,13 @@
 """Fill in Position / Interests / Website for each person on the
-ReviewerList sheet, using Ollama Cloud web search + a local Ollama model
-to summarize what it finds.
+ReviewerList sheet, using web search + an LLM to summarize what it finds.
+
+Provider is picked via LLM_PROVIDER in .env (default 'ollama' -- your
+locally-signed-in Ollama app, no key needed). 'ollama'/'ollama_cloud' do a
+two-step search-then-summarize using Ollama Cloud's search API (needs
+OLLAMA_API_KEY regardless of LLM_PROVIDER, since it's the only standalone
+search endpoint wired up here); 'anthropic'/'openai' do it in one call via
+that provider's own built-in web-search tool, using LLM_API_KEY. See
+common.research_person() for details.
 
 Usage:
     python enrich_reviewers.py                 # fill every blank row
@@ -9,13 +16,6 @@ Usage:
                                                   # ones already filled in
     python enrich_reviewers.py --only "Pei Siang Goh,Xiaobai Li"  # redo just these people
     python enrich_reviewers.py --workbook path\to\file.xlsx
-
-Only rows where Position, Interests, and Website are ALL blank get looked
-up (unless --force is given), so re-running after adding a few new names
-to ReviewerList only does work for the new people.
-
-Requires OLLAMA_API_KEY in .env (see .env.example) and the Ollama app
-running locally (for the summarizing chat calls).
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, CONFERENCE_NAME, CONFERENCE_FIELD, ollama_chat, ollama_web_search, extract_json, start_logging
+from common import WORKBOOK_PATH, research_person, start_logging
 
 SHEET = "ReviewerList"
 SAVE_EVERY = 1  # autosave cadence, so a crash mid-run doesn't lose progress
@@ -44,72 +44,6 @@ def find_columns(ws) -> dict[str, int]:
     if missing:
         raise SystemExit(f"ReviewerList is missing expected column(s): {missing}")
     return header
-
-
-def lookup_reviewer(name: str, affiliation: str, email: str) -> dict:
-    """Web-search for a person, then have the model extract structured info."""
-    queries = [f"{name} {affiliation} research", f"{name} Google Scholar"]
-    all_results = []
-    for q in queries:
-        try:
-            all_results.extend(ollama_web_search(q, max_results=5))
-        except RuntimeError:
-            raise  # missing/bad API key -- not worth continuing the run
-        except Exception:
-            continue  # a single flaky search shouldn't kill the whole row
-
-    if not all_results:
-        return {"position": "Not found", "interests": "", "website": ""}
-
-    snippets = "\n\n".join(
-        f"URL: {r.get('url','')}\nTitle: {r.get('title','')}\n"
-        f"Snippet: {r.get('content', r.get('snippet',''))[:500]}"
-        for r in all_results[:8]
-    )
-
-    prompt = f"""You are helping {CONFERENCE_NAME} (field: {CONFERENCE_FIELD})
-identify a reviewer's profile.
-
-Person: {name}
-Stated affiliation: {affiliation or "(unknown)"}
-Email: {email or "(unknown)"}
-
-Web search results about this person:
-{snippets}
-
-IMPORTANT -- name-collision check: common names can match a *different*
-person at the same or a different institution. Before using a result,
-check that it is plausibly the SAME person: does the field of work fit
-someone who co-authors or reviews for {CONFERENCE_NAME} ({CONFERENCE_FIELD})?
-A result describing someone in a starkly unrelated field (e.g. biochemistry,
-marine biology, high-energy physics, when this conference is not in that
-space) is very likely a namesake, NOT this person, even if the affiliation
-string matches -- large universities have many people who share a name.
-When in doubt, treat it as a different person.
-
-From ONLY search results you're confident are about this specific person,
-extract:
-- "position": their current job title/role (e.g. "Associate Professor of Information Systems"). If not stated (but you're still confident of the identity), use "Unknown".
-- "interests": a short comma-separated list (3-8 items) of their research interests/topics. If not stated, use "".
-- "website": the single best URL for this person -- prefer a personal or university faculty page, then a Google Scholar profile, then LinkedIn.
-
-If you are not confident ANY result is about this specific person, set ALL
-THREE fields to "Unknown"/"" -- do not mix a confident field with fields
-drawn from a namesake's results. Do not invent information not supported
-by the search results. Reply with ONLY a JSON object, no other text:
-{{"position": "...", "interests": "...", "website": "..."}}"""
-
-    reply = ollama_chat([{"role": "user", "content": prompt}])
-    try:
-        data = extract_json(reply)
-    except Exception:
-        return {"position": "Not found", "interests": "", "website": ""}
-
-    return {
-        "position": str(data.get("position") or "Unknown").strip()[:255],
-        "interests": str(data.get("interests") or "").strip()[:500],
-        "website": str(data.get("website") or "").strip()[:255],
-    }
 
 
 def main() -> None:
@@ -170,7 +104,7 @@ def main() -> None:
 
         print(f"[{i}/{len(todo)}] {name} ...", end=" ", flush=True)
         try:
-            info = lookup_reviewer(name, str(affiliation), str(email))
+            info = research_person(name, str(affiliation), str(email))
         except RuntimeError as exc:
             print(f"\nFATAL: {exc}")
             sys.exit(1)

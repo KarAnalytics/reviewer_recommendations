@@ -1,7 +1,7 @@
 """Populate the AISuggestedReviewers column on the Submissions sheet: for
-each paper, ask the local Ollama model to pick the best-matching reviewers
-from ReviewerList, automatically excluding the paper's own authors (and
-anyone already entered as Reviewer 1/2/3 for that paper).
+each paper, ask an LLM to pick the best-matching reviewers from
+ReviewerList, automatically excluding the paper's own authors (and anyone
+already entered as Reviewer 1/2/3 for that paper).
 
 A reviewer is also dropped from consideration once they've been suggested
 --max-per-reviewer times (default 5) across the whole run, so suggestions
@@ -28,9 +28,10 @@ Usage:
 Run this any time you add new papers (or re-run enrich_reviewers.py) --
 it only (re)computes rows that need it, so it's safe/cheap to re-run.
 
-Requires the Ollama app running locally with the model set in .env
-(OLLAMA_MODEL, default gemma4:31b-cloud). No OLLAMA_API_KEY needed for
-this script -- that's only for enrich_reviewers.py's web search.
+Uses whichever LLM_PROVIDER is set in .env (default 'ollama' -- your
+locally-signed-in Ollama app, no key needed). Set LLM_PROVIDER + LLM_API_KEY
+to bring your own key for anthropic / openai / groq / openrouter /
+ollama_cloud instead -- each person running this can use their own.
 """
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match, start_logging, sync_review_counts
+from common import WORKBOOK_PATH, CONFERENCE_NAME, llm_chat, extract_json, split_authors, names_match, start_logging, sync_review_counts
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -211,7 +212,7 @@ Reply with ONLY a JSON array of exactly {top_n} objects (fewer only if the
 list has fewer reasonably-fitting candidates), ranked best-fit first:
 [{{"name": "<exact name as listed above>", "reason": "<one short clause, <12 words>"}}]"""
 
-    reply = ollama_chat([{"role": "user", "content": prompt}])
+    reply = llm_chat([{"role": "user", "content": prompt}])
     try:
         data = extract_json(reply)
     except Exception:

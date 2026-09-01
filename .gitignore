@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+
+# Reviewer/submission data (contains reviewer PII and unpublished
+# submission content) -- keep it local, never push it to GitHub.
+*.xlsx
+*.xls
+*.log
+
+# Claude session records -- local notes only, not for GitHub.
+SESSION_LOG*.md
+

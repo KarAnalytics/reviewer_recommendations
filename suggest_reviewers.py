@@ -44,9 +44,8 @@ from collections import Counter
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-import openpyxl
-
-from common import WORKBOOK_PATH, CONFERENCE_NAME, llm_chat, extract_json, split_authors, names_match, start_logging, sync_review_counts
+from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, llm_chat,
+                    extract_json, split_authors, names_match, start_logging, sync_review_counts)
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -241,7 +240,7 @@ def main() -> None:
     start_logging("suggest_reviewers")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
-                     required=WORKBOOK_PATH is None,
+                     required=WORKBOOK_PATH is None and not GOOGLE_SHEET_ID,
                      help="path to the .xlsx (auto-detected if there's exactly one "
                           "next to reviewer_tools/; otherwise required, or set "
                           "WORKBOOK_PATH in .env)")
@@ -253,7 +252,7 @@ def main() -> None:
                           "this many times across the run (default 5); 0 disables the cap")
     args = ap.parse_args()
 
-    wb = openpyxl.load_workbook(args.workbook)
+    wb = load_workbook(args.workbook)
     for sheet in (SUB_SHEET, REV_SHEET):
         if sheet not in wb.sheetnames:
             raise SystemExit(f"No '{sheet}' sheet in {args.workbook}")

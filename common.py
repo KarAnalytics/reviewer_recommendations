@@ -63,6 +63,27 @@ def _autodetect_workbook() -> Path | None:
 
 WORKBOOK_PATH = _autodetect_workbook()
 
+# Set GOOGLE_SHEET_ID to switch ALL THREE scripts from the local .xlsx to a
+# shared Google Sheet instead (see sheets_backend.py) -- everything else
+# (WORKBOOK_PATH/--workbook) is then ignored. Needs GOOGLE_SERVICE_ACCOUNT_FILE
+# (local dev: path to your service account's JSON key) or
+# GOOGLE_SERVICE_ACCOUNT_JSON (its raw JSON content -- for GitHub Actions
+# secrets, where a file path is awkward) also set.
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "").strip()
+
+
+def load_workbook(path: str | None):
+    """Open the workbook -- a Google Sheet if GOOGLE_SHEET_ID is set
+    (ignoring `path`), otherwise the local .xlsx at `path` via openpyxl.
+    Use this everywhere instead of calling openpyxl.load_workbook()
+    directly, so all three scripts work against either backend unchanged.
+    """
+    if GOOGLE_SHEET_ID:
+        from sheets_backend import GoogleSheetWorkbook
+        return GoogleSheetWorkbook(GOOGLE_SHEET_ID)
+    import openpyxl
+    return openpyxl.load_workbook(path)
+
 # Optional context to steer the model's name-collision check and its sense
 # of what "topical fit" means -- set these in .env to tailor the tool to
 # your own conference. Sensible generic defaults work fine without any of

@@ -26,9 +26,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-import openpyxl
-
-from common import WORKBOOK_PATH, research_person, start_logging
+from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, load_workbook, research_person, start_logging
 
 SHEET = "ReviewerList"
 SAVE_EVERY = 1  # autosave cadence, so a crash mid-run doesn't lose progress
@@ -50,7 +48,7 @@ def main() -> None:
     start_logging("enrich_reviewers")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
-                     required=WORKBOOK_PATH is None,
+                     required=WORKBOOK_PATH is None and not GOOGLE_SHEET_ID,
                      help="path to the .xlsx (auto-detected if there's exactly one "
                           "next to reviewer_tools/; otherwise required, or set "
                           "WORKBOOK_PATH in .env)")
@@ -64,7 +62,7 @@ def main() -> None:
     if args.only:
         only_names = {n.strip().lower() for n in args.only.split(",") if n.strip()}
 
-    wb = openpyxl.load_workbook(args.workbook)
+    wb = load_workbook(args.workbook)
     if SHEET not in wb.sheetnames:
         raise SystemExit(f"No '{SHEET}' sheet in {args.workbook}")
     ws = wb[SHEET]

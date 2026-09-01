@@ -1,2 +1,7 @@
 openpyxl>=3.1
 requests>=2.31
+
+# Only needed if you set GOOGLE_SHEET_ID (shared Google Sheet backend
+# instead of a local .xlsx) -- see sheets_backend.py.
+gspread>=6.0
+google-auth>=2.30

@@ -17,9 +17,20 @@ Every run also writes its own timestamped, numbered log
 one -- kept outside `reviewer_tools/` and out of git (see `.gitignore` one
 level up) since logs can contain reviewer PII and paper content.
 
+**Two ways to run this:**
+- **Locally**, against a `.xlsx` file (the default -- everything below
+  describes this mode first).
+- **From GitHub Actions**, against a live, shared Google Sheet that
+  multiple co-chairs can edit concurrently (native Google Sheets
+  co-authoring), triggered by anyone with repo access clicking "Run
+  workflow" in the browser -- no Python/local setup needed on their end.
+  See "Google Sheets backend" and "Running from GitHub Actions" below.
+
 ## Input spreadsheet format
 
-A single `.xlsx` workbook with two sheets (exact names, case-sensitive):
+A single `.xlsx` workbook (or a Google Sheet with the same structure --
+see "Google Sheets backend" below) with two sheets (exact names,
+case-sensitive):
 
 **`Submissions`** -- one row per paper. Required columns:
 
@@ -119,6 +130,76 @@ smoke-test with `--limit 5` before trusting either at scale.
 Adding another OpenAI-wire-compatible provider (e.g. a different one you
 already use) is a few lines in `common.py`'s `_OPENAI_COMPATIBLE_PROVIDERS`
 dict -- no new function needed for the ranking-call side.
+
+## Google Sheets backend (shared, multi-editor data)
+
+Set `GOOGLE_SHEET_ID` in `.env` to switch **all three scripts** from the
+local `.xlsx` to a shared Google Sheet -- `--workbook`/`WORKBOOK_PATH` are
+then ignored entirely. This is what lets multiple co-chairs edit the same
+live data (Google Sheets' native real-time co-authoring) and what the
+GitHub Actions workflows below use.
+
+**One-time setup** (about 10 minutes, no IT/admin approval needed for a
+personal Google account):
+
+1. Create a **Google Sheet** with the same two tabs/columns as the local
+   workbook (see "Input spreadsheet format" above) -- easiest way: open
+   your existing `.xlsx` in Google Drive, then **File -> Save as Google
+   Sheets** (this is important -- just uploading an `.xlsx` and viewing it
+   in Drive's Office-compatibility mode does *not* work with the Sheets
+   API; it has to actually become a native Sheets document).
+2. At <https://console.cloud.google.com>, create a project (any name),
+   enable the **Google Sheets API** for it (APIs & Services -> Enable
+   APIs), then create a **Service Account** (APIs & Services ->
+   Credentials -> Create Credentials -> Service Account -- no special role
+   needed) and generate a JSON key for it (Keys -> Add Key -> JSON).
+   **Treat that downloaded file like a password.**
+3. Open the JSON file, copy its `client_email` value.
+4. Share your Google Sheet with that email address, **Editor** access --
+   exactly like sharing with a person.
+5. For local runs: save the JSON file somewhere local (it's gitignored by
+   filename pattern -- `service_account*.json` and similar -- but double
+   check with `git check-ignore -v <file>` before trusting that), then in
+   `.env` set:
+   ```
+   GOOGLE_SHEET_ID=<the long ID from the sheet's URL, between /d/ and /edit>
+   GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
+   ```
+   For GitHub Actions: see below -- the JSON's raw *content* goes into a
+   repo secret instead of a local file.
+
+Note: `sync_review_counts()`'s `COUNTIF` formulas work identically in
+Google Sheets (same function, same cross-sheet `Sheet!A:A` syntax).
+
+## Running from GitHub Actions
+
+Lets anyone with write access to this repo run these scripts against the
+shared Google Sheet from a browser -- no Python, no local Ollama, no
+cloning the repo. Each person brings their own LLM API key at trigger
+time (masked in the logs, never stored); nothing shared there. What *is*
+shared, and needs setting up **once** by whoever administers the repo:
+
+1. Complete the Google Sheets backend setup above.
+2. In the repo -> **Settings -> Secrets and variables -> Actions**:
+   - **Secrets** tab -> New repository secret -> name `GOOGLE_SERVICE_ACCOUNT_JSON`,
+     value = the *entire contents* of the service account's JSON key file
+     (open it in a text editor, copy everything, paste it in).
+   - **Variables** tab -> New repository variable -> name `GOOGLE_SHEET_ID`,
+     value = the Sheet ID (not sensitive, fine as a plain variable).
+   - Optionally also add `CONFERENCE_NAME` / `CONFERENCE_FIELD` variables
+     (same purpose as the `.env` versions).
+3. That's it. Anyone with write access can now go to the repo's **Actions**
+   tab, pick a workflow (**Suggest reviewers**, **Enrich reviewers**, or
+   **Update review counts**), click **Run workflow**, fill in their own
+   LLM provider + API key (and any other options), and run it. Results
+   land directly in the live Google Sheet; there's nothing to commit back
+   since the script writes straight to Sheets via API. Each run's log is
+   attached to the run as a downloadable artifact.
+
+Workflow files live in `.github/workflows/`. Handover to next year's
+co-chairs is then: point `GOOGLE_SHEET_ID` at their new sheet (reshared
+with the same service account, or a fresh one), give them repo write
+access, done -- nothing else to migrate.
 
 ## 1. `enrich_reviewers.py` -- fill in Position / Interests / Website
 
@@ -251,8 +332,9 @@ or `ReviewerList` keeps this accurate.
 ## Notes
 
 - `common.py` holds shared logic (`.env` loading, workbook auto-detection,
-  the multi-provider LLM calls, and the author-name parsing/matching) --
-  no need to run it directly.
+  the multi-provider LLM calls, and the author-name parsing/matching);
+  `sheets_backend.py` is the Google Sheets adapter (see above) -- neither
+  needs to be run directly.
 - These are AI-generated *suggestions* to speed up manual reviewer
   selection, not final assignments -- spot-check a few before relying on
   them, especially early on, and especially for reviewers with common

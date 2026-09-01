@@ -25,22 +25,20 @@ from __future__ import annotations
 
 import argparse
 
-import openpyxl
-
-from common import WORKBOOK_PATH, REVIEW_COUNT_COLUMN, sync_review_counts, start_logging
+from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, REVIEW_COUNT_COLUMN, load_workbook, sync_review_counts, start_logging
 
 
 def main() -> None:
     start_logging("update_review_counts")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
-                     required=WORKBOOK_PATH is None,
+                     required=WORKBOOK_PATH is None and not GOOGLE_SHEET_ID,
                      help="path to the .xlsx (auto-detected if there's exactly one "
                           "next to reviewer_tools/; otherwise required, or set "
                           "WORKBOOK_PATH in .env)")
     args = ap.parse_args()
 
-    wb = openpyxl.load_workbook(args.workbook)
+    wb = load_workbook(args.workbook)
     n = sync_review_counts(wb)
     if n == 0:
         raise SystemExit(

@@ -28,7 +28,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, ollama_chat, ollama_web_search, extract_json
+from common import WORKBOOK_PATH, CONFERENCE_NAME, CONFERENCE_FIELD, ollama_chat, ollama_web_search, extract_json
 
 SHEET = "ReviewerList"
 SAVE_EVERY = 1  # autosave cadence, so a crash mid-run doesn't lose progress
@@ -67,10 +67,8 @@ def lookup_reviewer(name: str, affiliation: str, email: str) -> dict:
         for r in all_results[:8]
     )
 
-    prompt = f"""You are helping an academic conference (SIGDSA -- an AIS
-special interest group on Decision Support & Analytics; think Information
-Systems, business analytics, data science, AI, decision support,
-management) identify a reviewer's profile.
+    prompt = f"""You are helping {CONFERENCE_NAME} (field: {CONFERENCE_FIELD})
+identify a reviewer's profile.
 
 Person: {name}
 Stated affiliation: {affiliation or "(unknown)"}
@@ -81,13 +79,13 @@ Web search results about this person:
 
 IMPORTANT -- name-collision check: common names can match a *different*
 person at the same or a different institution. Before using a result,
-check that it is plausibly the SAME person: does the field of work fit an
-academic in IS/business/analytics/CS/management (this person co-authored
-or reviews for an IS/analytics conference)? A result describing someone in
-an unrelated field (e.g. biochemistry, marine biology, high-energy
-physics) is very likely a namesake, NOT this person, even if the
-affiliation string matches -- large universities have many people who
-share a name. When in doubt, treat it as a different person.
+check that it is plausibly the SAME person: does the field of work fit
+someone who co-authors or reviews for {CONFERENCE_NAME} ({CONFERENCE_FIELD})?
+A result describing someone in a starkly unrelated field (e.g. biochemistry,
+marine biology, high-energy physics, when this conference is not in that
+space) is very likely a namesake, NOT this person, even if the affiliation
+string matches -- large universities have many people who share a name.
+When in doubt, treat it as a different person.
 
 From ONLY search results you're confident are about this specific person,
 extract:
@@ -116,7 +114,11 @@ by the search results. Reply with ONLY a JSON object, no other text:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--workbook", default=str(WORKBOOK_PATH))
+    ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
+                     required=WORKBOOK_PATH is None,
+                     help="path to the .xlsx (auto-detected if there's exactly one "
+                          "next to reviewer_tools/; otherwise required, or set "
+                          "WORKBOOK_PATH in .env)")
     ap.add_argument("--limit", type=int, default=None, help="only process the first N eligible rows")
     ap.add_argument("--force", action="store_true", help="re-look-up rows even if already filled in")
     ap.add_argument("--only", default=None,

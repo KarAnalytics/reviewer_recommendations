@@ -1,8 +1,8 @@
-"""Shared helpers for the SIGDSA reviewer-list scripts.
+"""Shared helpers for the reviewer-recommendation scripts.
 
 Handles: .env loading, talking to the local Ollama app (chat completions)
-and to Ollama Cloud's web-search API, and parsing author names out of the
-Submissions sheet's "Authors" free-text field.
+and to Ollama Cloud's web-search API, workbook auto-detection, and parsing
+author names out of the Submissions sheet's "Authors" free-text field.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from pathlib import Path
 import requests
 
 HERE = Path(__file__).resolve().parent
-WORKBOOK_PATH = HERE.parent / "SIGDSA26_2026-09-01_ReviewerList.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +40,31 @@ load_env()
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:31b-cloud")
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "").strip()
+
+
+def _autodetect_workbook() -> Path | None:
+    """Find the .xlsx to work on. Prefers WORKBOOK_PATH from .env; otherwise,
+    if there's exactly one .xlsx sitting in the parent folder (next to this
+    reviewer_tools/ folder), use that. Returns None if it can't tell which
+    file you mean -- callers should then require --workbook explicitly.
+    """
+    env_val = os.environ.get("WORKBOOK_PATH")
+    if env_val:
+        return Path(env_val)
+    candidates = [p for p in HERE.parent.glob("*.xlsx") if not p.name.startswith("~$")]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+WORKBOOK_PATH = _autodetect_workbook()
+
+# Optional context to steer the model's name-collision check and its sense
+# of what "topical fit" means -- set these in .env to tailor the tool to
+# your own conference. Sensible generic defaults work fine without any of
+# this configured.
+CONFERENCE_NAME = os.environ.get("CONFERENCE_NAME", "").strip() or "this conference"
+CONFERENCE_FIELD = os.environ.get("CONFERENCE_FIELD", "").strip() or "this conference's field"
 
 
 # ---------------------------------------------------------------------------

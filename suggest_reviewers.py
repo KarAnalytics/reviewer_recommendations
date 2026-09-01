@@ -27,7 +27,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, ollama_chat, extract_json, split_authors, names_match
+from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -104,7 +104,7 @@ def pick_reviewers(title: str, keywords: str, abstract: str,
                 f"\"{p['title']}\" (keywords: {p['keywords'] or 'n/a'})"
                 for p in c["own_papers"]
             )
-            line += f" | Also a SIGDSA26 author, on: {own}"
+            line += f" | Also a {CONFERENCE_NAME} author, on: {own}"
         lines.append(line)
     listing = "\n".join(lines)
 
@@ -120,7 +120,7 @@ CANDIDATE REVIEWERS (numbered list; you may ONLY choose from this list):
 
 Pick the {top_n} candidates whose research interests/position best match this
 paper's topic. Topical fit comes first. When a candidate's stated Interests
-are unknown/thin but they are listed as a SIGDSA26 author on a paper
+are unknown/thin but they are listed as a {CONFERENCE_NAME} author on a paper
 covering a related topic, treat that paper's title/keywords as a strong
 signal of their expertise too.
 
@@ -165,7 +165,11 @@ list has fewer candidates), ranked best-fit first:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--workbook", default=str(WORKBOOK_PATH))
+    ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
+                     required=WORKBOOK_PATH is None,
+                     help="path to the .xlsx (auto-detected if there's exactly one "
+                          "next to reviewer_tools/; otherwise required, or set "
+                          "WORKBOOK_PATH in .env)")
     ap.add_argument("--top-n", type=int, default=5)
     ap.add_argument("--force", action="store_true", help="recompute every paper, not just blank ones")
     ap.add_argument("--limit", type=int, default=None, help="only process the first N eligible papers")

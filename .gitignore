@@ -2,6 +2,11 @@
 __pycache__/
 *.pyc
 
+# Google service account key -- never push it, regardless of filename.
+service_account*.json
+*service-account*.json
+*.json.key
+
 # Reviewer/submission data (contains reviewer PII and unpublished
 # submission content) -- keep it local, never push it to GitHub.
 *.xlsx

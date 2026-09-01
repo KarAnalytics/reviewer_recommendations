@@ -28,7 +28,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, CONFERENCE_NAME, CONFERENCE_FIELD, ollama_chat, ollama_web_search, extract_json
+from common import WORKBOOK_PATH, CONFERENCE_NAME, CONFERENCE_FIELD, ollama_chat, ollama_web_search, extract_json, start_logging
 
 SHEET = "ReviewerList"
 SAVE_EVERY = 1  # autosave cadence, so a crash mid-run doesn't lose progress
@@ -113,6 +113,7 @@ by the search results. Reply with ONLY a JSON object, no other text:
 
 
 def main() -> None:
+    start_logging("enrich_reviewers")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
                      required=WORKBOOK_PATH is None,

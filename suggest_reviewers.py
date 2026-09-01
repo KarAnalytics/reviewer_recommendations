@@ -27,7 +27,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import openpyxl
 
-from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match
+from common import WORKBOOK_PATH, CONFERENCE_NAME, ollama_chat, extract_json, split_authors, names_match, start_logging
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -164,6 +164,7 @@ list has fewer candidates), ranked best-fit first:
 
 
 def main() -> None:
+    start_logging("suggest_reviewers")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workbook", default=str(WORKBOOK_PATH) if WORKBOOK_PATH else None,
                      required=WORKBOOK_PATH is None,

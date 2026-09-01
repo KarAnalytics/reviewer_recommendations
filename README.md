@@ -11,6 +11,11 @@ safe to re-run: they only fill in blank cells unless you pass `--force`,
 so adding a handful of new papers/reviewers and re-running only does work
 for the new rows.
 
+Every run also writes its own timestamped, numbered log
+(`logs/<script>_run<N>_<timestamp>.log`) to a `logs/` folder next to this
+one -- kept outside `reviewer_tools/` and out of git (see `.gitignore` one
+level up) since logs can contain reviewer PII and paper content.
+
 ## Input spreadsheet format
 
 A single `.xlsx` workbook with two sheets (exact names, case-sensitive):

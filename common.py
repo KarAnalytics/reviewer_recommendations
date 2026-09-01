@@ -1,14 +1,17 @@
 """Shared helpers for the reviewer-recommendation scripts.
 
 Handles: .env loading, talking to the local Ollama app (chat completions)
-and to Ollama Cloud's web-search API, workbook auto-detection, and parsing
-author names out of the Submissions sheet's "Authors" free-text field.
+and to Ollama Cloud's web-search API, workbook auto-detection, run logging,
+and parsing author names out of the Submissions sheet's "Authors" free-text
+field.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -190,3 +193,42 @@ def names_match(a: str, b: str) -> bool:
     if pa and pb and pa[-1] == pb[-1] and pa[0][:1] == pb[0][:1]:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Run logging -- every run gets its own timestamped, run-numbered log file
+# in logs/ (a sibling of reviewer_tools/, not inside it), while everything
+# still prints to the console as normal.
+# ---------------------------------------------------------------------------
+LOGS_DIR = HERE.parent / "logs"
+
+
+class _Tee:
+    """Writes to multiple streams at once (console + log file)."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
+def start_logging(script_name: str) -> Path:
+    """Mirror everything this script prints (stdout + stderr) into a fresh
+    timestamped, run-numbered file under logs/, in addition to the console.
+    Call this once, near the top of main(). Returns the log file's path.
+    """
+    LOGS_DIR.mkdir(exist_ok=True)
+    run_num = len(list(LOGS_DIR.glob(f"{script_name}_run*.log"))) + 1
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOGS_DIR / f"{script_name}_run{run_num:03d}_{timestamp}.log"
+    log_file = open(log_path, "w", encoding="utf-8")
+    sys.stdout = _Tee(sys.stdout, log_file)
+    sys.stderr = _Tee(sys.stderr, log_file)
+    print(f"Logging this run to {log_path}")
+    return log_path

@@ -26,28 +26,59 @@ _SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 _HERE = Path(__file__).resolve().parent
 
 
-def _load_credentials() -> Credentials:
+def _resolve(path_str: str) -> Path:
+    """Resolve relative to reviewer_tools/, not the current working
+    directory, so this works the same whether you run the scripts from
+    inside reviewer_tools/ or elsewhere."""
+    p = Path(path_str)
+    return p if p.is_absolute() else _HERE / p
+
+
+def _load_client() -> gspread.Client:
+    """Authorize and return a gspread Client. Two modes:
+
+    - Service account (GOOGLE_SERVICE_ACCOUNT_FILE / _JSON set): one shared
+      credential, same access for everyone who has the key file. Simple,
+      but every edit shows up under the service account's identity in the
+      Sheet's revision history, and access can't be revoked per-person.
+
+    - Per-person OAuth (neither of the above set): each person signs in
+      with their OWN Google account via a one-time browser consent screen
+      (gspread caches the resulting token locally after that, so it's
+      only interactive once per person per machine). Edits are attributed
+      to each real person, and access is revoked the normal way -- remove
+      them from the Sheet's sharing list. Reads the OAuth client
+      credential from GOOGLE_OAUTH_CLIENT_FILE, or gspread's own default
+      config location if that's not set (see gspread.oauth()'s docs).
+    """
     raw_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
     if raw_json:
         info = json.loads(raw_json)
-        return Credentials.from_service_account_info(info, scopes=_SCOPES)
+        creds = Credentials.from_service_account_info(info, scopes=_SCOPES)
+        return gspread.authorize(creds)
 
     file_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
     if file_path:
-        # Resolve relative to reviewer_tools/, not the current working
-        # directory, so this works the same whether you run the scripts
-        # from inside reviewer_tools/ or elsewhere.
-        p = Path(file_path)
-        if not p.is_absolute():
-            p = _HERE / p
-        return Credentials.from_service_account_file(str(p), scopes=_SCOPES)
+        creds = Credentials.from_service_account_file(str(_resolve(file_path)), scopes=_SCOPES)
+        return gspread.authorize(creds)
 
-    raise RuntimeError(
-        "GOOGLE_SHEET_ID is set but no credentials were found. Set either "
-        "GOOGLE_SERVICE_ACCOUNT_FILE (path to your service account's JSON "
-        "key) or GOOGLE_SERVICE_ACCOUNT_JSON (the key's raw JSON content -- "
-        "used for GitHub Actions secrets) in .env."
-    )
+    oauth_kwargs = {"scopes": _SCOPES}
+    oauth_client_file = os.environ.get("GOOGLE_OAUTH_CLIENT_FILE", "").strip()
+    if oauth_client_file:
+        oauth_kwargs["credentials_filename"] = str(_resolve(oauth_client_file))
+    try:
+        return gspread.oauth(**oauth_kwargs)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "GOOGLE_SHEET_ID is set but no Google credentials were found. Either "
+            "set GOOGLE_SERVICE_ACCOUNT_FILE/GOOGLE_SERVICE_ACCOUNT_JSON in .env "
+            "(shared service account), or set up per-person OAuth: get an OAuth "
+            "client credential (Google Cloud Console -> APIs & Services -> "
+            "Credentials -> Create Credentials -> OAuth client ID -> Desktop app), "
+            "save it locally, and set GOOGLE_OAUTH_CLIENT_FILE to its path -- "
+            "you'll then get a one-time browser sign-in prompt. See README.md's "
+            "'Google Sheets backend' section."
+        ) from exc
 
 
 class _GCell:
@@ -126,15 +157,16 @@ class GoogleSheetWorkbook:
     """Opens a Google Sheet by ID and wraps each tab as a _GWorksheet."""
 
     def __init__(self, sheet_id: str):
-        creds = _load_credentials()
-        gc = gspread.authorize(creds)
+        gc = _load_client()
         try:
             self._sh = gc.open_by_key(sheet_id)
         except gspread.exceptions.APIError as exc:
             raise RuntimeError(
                 f"Couldn't open Google Sheet {sheet_id!r}: {exc}. Check that "
                 f"GOOGLE_SHEET_ID is correct and that the sheet is shared "
-                f"(Editor access) with your service account's client_email."
+                f"(Editor access) with whichever identity is authenticating -- "
+                f"the service account's client_email, or your own Google "
+                f"account if using per-person OAuth."
             ) from exc
         self._worksheets = {ws.title: _GWorksheet(ws) for ws in self._sh.worksheets()}
 

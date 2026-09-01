@@ -20,11 +20,10 @@ level up) since logs can contain reviewer PII and paper content.
 **Two ways to run this:**
 - **Locally**, against a `.xlsx` file (the default -- everything below
   describes this mode first).
-- **From GitHub Actions**, against a live, shared Google Sheet that
-  multiple co-chairs can edit concurrently (native Google Sheets
-  co-authoring), triggered by anyone with repo access clicking "Run
-  workflow" in the browser -- no Python/local setup needed on their end.
-  See "Google Sheets backend" and "Running from GitHub Actions" below.
+- **Locally, against a shared Google Sheet** instead -- multiple co-chairs
+  can then edit the same live data concurrently (native Google Sheets
+  co-authoring), each running the scripts on their own machine with their
+  own LLM key. See "Google Sheets backend" below.
 
 ## Input spreadsheet format
 
@@ -136,11 +135,11 @@ dict -- no new function needed for the ranking-call side.
 Set `GOOGLE_SHEET_ID` in `.env` to switch **all three scripts** from the
 local `.xlsx` to a shared Google Sheet -- `--workbook`/`WORKBOOK_PATH` are
 then ignored entirely. This is what lets multiple co-chairs edit the same
-live data (Google Sheets' native real-time co-authoring) and what the
-GitHub Actions workflows below use.
+live data, and run these scripts against it themselves (see "Letting
+other co-chairs run this" below), via Google Sheets' native real-time
+co-authoring.
 
-**One-time setup** (about 10 minutes, no IT/admin approval needed for a
-personal Google account):
+**Steps 1-2 are shared setup, then pick an auth mode:**
 
 1. Create a **Google Sheet** with the same two tabs/columns as the local
    workbook (see "Input spreadsheet format" above) -- easiest way: open
@@ -148,58 +147,80 @@ personal Google account):
    Sheets** (this is important -- just uploading an `.xlsx` and viewing it
    in Drive's Office-compatibility mode does *not* work with the Sheets
    API; it has to actually become a native Sheets document).
-2. At <https://console.cloud.google.com>, create a project (any name),
+2. At <https://console.cloud.google.com>, create a project (any name) and
    enable the **Google Sheets API** for it (APIs & Services -> Enable
-   APIs), then create a **Service Account** (APIs & Services ->
-   Credentials -> Create Credentials -> Service Account -- no special role
-   needed) and generate a JSON key for it (Keys -> Add Key -> JSON).
-   **Treat that downloaded file like a password.**
-3. Open the JSON file, copy its `client_email` value.
-4. Share your Google Sheet with that email address, **Editor** access --
-   exactly like sharing with a person.
-5. For local runs: save the JSON file somewhere local (it's gitignored by
-   filename pattern -- `service_account*.json` and similar -- but double
-   check with `git check-ignore -v <file>` before trusting that), then in
+   APIs).
+
+**Auth mode A -- shared service account** (simpler, but one shared
+credential; see the trade-offs noted in `.env.example`):
+
+3. APIs & Services -> Credentials -> Create Credentials -> **Service
+   Account** (no special role needed), then generate a JSON key for it
+   (Keys -> Add Key -> JSON). **Treat that downloaded file like a
+   password.**
+4. Open the JSON file, copy its `client_email` value, and share your
+   Google Sheet with that email address, **Editor** access -- exactly
+   like sharing with a person.
+5. Save the JSON file somewhere local (it's gitignored by filename
+   pattern -- `service_account*.json` and similar -- but double check
+   with `git check-ignore -v <file>` before trusting that), then in
    `.env` set:
    ```
    GOOGLE_SHEET_ID=<the long ID from the sheet's URL, between /d/ and /edit>
    GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
    ```
-   For GitHub Actions: see below -- the JSON's raw *content* goes into a
-   repo secret instead of a local file.
+
+**Auth mode B -- per-person OAuth** (recommended for multi-person use --
+each person signs in as themselves, individually revocable, edits
+attributed to real names):
+
+3. APIs & Services -> Credentials -> Create Credentials -> **OAuth client
+   ID** -> Application type **Desktop app**. Download its JSON.
+4. In the same Cloud project, **OAuth consent screen** -> add each
+   co-chair's Google account email as a **test user** (needed while the
+   app is in "Testing" mode, which is fine for a small private tool like
+   this -- no Google verification review required).
+5. Share your Google Sheet with each co-chair's own Google account,
+   **Editor** access (the normal Google Sheets Share dialog).
+6. Each person saves the OAuth client JSON somewhere local (also
+   gitignored by pattern -- `oauth_client*.json`), and sets in their own
+   `.env`:
+   ```
+   GOOGLE_SHEET_ID=<the same sheet ID for everyone>
+   GOOGLE_OAUTH_CLIENT_FILE=oauth_client.json
+   ```
+   The *first* time each person runs a script, a browser window opens
+   asking them to sign in and approve access -- after that, it's cached
+   locally (`%APPDATA%\gspread\authorized_user.json` on Windows,
+   `~/.config/gspread/` elsewhere) and won't prompt again on that machine.
 
 Note: `sync_review_counts()`'s `COUNTIF` formulas work identically in
 Google Sheets (same function, same cross-sheet `Sheet!A:A` syntax).
 
-## Running from GitHub Actions
+## Letting other co-chairs run this
 
-Lets anyone with write access to this repo run these scripts against the
-shared Google Sheet from a browser -- no Python, no local Ollama, no
-cloning the repo. Each person brings their own LLM API key at trigger
-time (masked in the logs, never stored); nothing shared there. What *is*
-shared, and needs setting up **once** by whoever administers the repo:
+There's no hosted/cloud runner here by design -- everything runs on
+whoever's machine invokes it, which keeps reviewer names and paper
+content off of any third-party server or public log you don't control
+(this repo is public; a hosted CI runner's logs would be too). Each
+co-chair who wants to run these scripts:
 
-1. Complete the Google Sheets backend setup above.
-2. In the repo -> **Settings -> Secrets and variables -> Actions**:
-   - **Secrets** tab -> New repository secret -> name `GOOGLE_SERVICE_ACCOUNT_JSON`,
-     value = the *entire contents* of the service account's JSON key file
-     (open it in a text editor, copy everything, paste it in).
-   - **Variables** tab -> New repository variable -> name `GOOGLE_SHEET_ID`,
-     value = the Sheet ID (not sensitive, fine as a plain variable).
-   - Optionally also add `CONFERENCE_NAME` / `CONFERENCE_FIELD` variables
-     (same purpose as the `.env` versions).
-3. That's it. Anyone with write access can now go to the repo's **Actions**
-   tab, pick a workflow (**Suggest reviewers**, **Enrich reviewers**, or
-   **Update review counts**), click **Run workflow**, fill in their own
-   LLM provider + API key (and any other options), and run it. Results
-   land directly in the live Google Sheet; there's nothing to commit back
-   since the script writes straight to Sheets via API. Each run's log is
-   attached to the run as a downloadable artifact.
+1. Clones this repo and does the "One-time setup" steps above.
+2. Gets Google Sheets access set up -- with **auth mode B (per-person
+   OAuth)**, that just means: you add them as a Sheet Editor and a test
+   user on the OAuth consent screen (steps above), they download the same
+   `GOOGLE_OAUTH_CLIENT_FILE`, and sign in themselves on first run. With
+   **auth mode A (shared service account)**, you'd instead send them the
+   service account JSON key file out-of-band (a password manager,
+   encrypted attachment -- not email, chat, or committed to git).
+3. Sets `GOOGLE_SHEET_ID` (the same one, from you) and their own
+   `LLM_API_KEY`/`LLM_PROVIDER` in their own local `.env`.
+4. Runs the scripts locally, same as you do -- results land directly in
+   the shared Google Sheet, visible to everyone with it open, same as any
+   other edit.
 
-Workflow files live in `.github/workflows/`. Handover to next year's
-co-chairs is then: point `GOOGLE_SHEET_ID` at their new sheet (reshared
-with the same service account, or a fresh one), give them repo write
-access, done -- nothing else to migrate.
+Handover to next year's co-chairs is the same process, pointed at a new
+(or reshared) Sheet -- nothing to migrate beyond that.
 
 ## 1. `enrich_reviewers.py` -- fill in Position / Interests / Website
 

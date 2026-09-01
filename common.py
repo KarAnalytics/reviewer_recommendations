@@ -65,10 +65,9 @@ WORKBOOK_PATH = _autodetect_workbook()
 
 # Set GOOGLE_SHEET_ID to switch ALL THREE scripts from the local .xlsx to a
 # shared Google Sheet instead (see sheets_backend.py) -- everything else
-# (WORKBOOK_PATH/--workbook) is then ignored. Needs GOOGLE_SERVICE_ACCOUNT_FILE
-# (local dev: path to your service account's JSON key) or
-# GOOGLE_SERVICE_ACCOUNT_JSON (its raw JSON content -- for GitHub Actions
-# secrets, where a file path is awkward) also set.
+# (WORKBOOK_PATH/--workbook) is then ignored. Also needs
+# GOOGLE_SERVICE_ACCOUNT_FILE (path to your service account's JSON key
+# file) or GOOGLE_SERVICE_ACCOUNT_JSON (its raw JSON content) set.
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "").strip()
 
 
@@ -151,7 +150,7 @@ def _require_llm_key(provider: str) -> str:
     if not LLM_API_KEY:
         raise RuntimeError(
             f"LLM_API_KEY is not set (required for LLM_PROVIDER={provider!r}). "
-            "Set LLM_PROVIDER and LLM_API_KEY in .env (or as GitHub Actions inputs)."
+            "Set LLM_PROVIDER and LLM_API_KEY in .env."
         )
     return LLM_API_KEY
 

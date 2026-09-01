@@ -118,13 +118,39 @@ For every submitted paper with a blank `AISuggestedReviewers` cell, this:
   than a web-search bio blurb, especially for reviewers whose
   Position/Interests came back blank/"Unknown". This is computed fresh
   each run, not stored in ReviewerList.
-- As a *tiebreaker* among comparably good topical matches, it prefers
-  reviewers more likely to actually respond -- PhD students, postdocs,
-  assistant/associate professors -- over senior leadership/administrative
-  roles (dean, department head/chair, director, president/CEO, named
-  chair professorships), who tend to be slower to respond to review
-  requests. Topical fit always comes first; a senior person who's clearly
-  the best topical match still gets suggested.
+- Among candidates who are a *reasonable* topical fit (not among everyone
+  indiscriminately), ranks by these priorities, in order:
+  1. **Topical fit is a floor, not the top sort key.** A candidate has to
+     plausibly connect to the paper's topic to be considered at all.
+  2. **Primary: early-career reviewers first.** PhD students, postdocs,
+     and assistant/associate professors are preferred over senior
+     leadership/administrative roles (dean, department head/chair,
+     director, president/CEO, named chair professorships) -- juniors
+     typically respond to and complete review requests faster; people in
+     those senior roles are usually stretched thin with editorial boards
+     and other service. A senior/leadership candidate is only suggested
+     when they're clearly and substantially the best topical match and no
+     reasonably-fitting junior candidate covers the topic -- seniors are a
+     fallback, not a coequal option.
+  3. **Secondary tiebreak, among similar seniority + fit:** prefers
+     reviewers currently assigned to **fewer** papers (real Reviewer 1/2/3
+     assignments, read fresh from Submissions each run) -- spreads actual
+     review workload instead of piling onto people already reviewing
+     several papers.
+  4. A clearly better topical match still wins even if it means a more
+     senior or busier person -- priorities 2-3 break ties, they don't
+     override an obviously better fit.
+
+  **How "junior vs. senior" is actually decided:** there's no Python-side
+  seniority score -- `Position` is passed to the model as raw text (e.g.
+  `"Dean"`, `"Assistant Professor"`, `"PhD Candidate"`), and the model
+  judges seniority and topical fit together in one call, guided by the
+  prompt language above. That's a deliberate choice: it handles arbitrary
+  or foreign job titles (e.g. *"Wissenschaftlicher Mitarbeiter"*, *"Vice
+  Dean for Research"*) without needing an exhaustive keyword list, but it
+  also means the exact ordering is inference-time behavior, not a rule
+  you can point to in code -- spot-check suggestions periodically rather
+  than assuming the ordering is guaranteed.
 - Writes a numbered list (name + one-line reason) into `AISuggestedReviewers`.
 - Caps how many *papers* any one reviewer can be suggested for across the
   whole run (default 5, `--max-per-reviewer`) -- once someone hits the

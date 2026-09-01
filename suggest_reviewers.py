@@ -10,6 +10,14 @@ suggested for nearly every paper. This counts suggestions already sitting
 in AISuggestedReviewers from earlier runs too, so the cap holds even
 across repeated runs.
 
+Among reasonably-fitting candidates, ranking primarily favors early-career
+reviewers (PhD students/postdocs/assistant-associate professors) over
+senior leadership/administrative roles (dean/chair/director/etc.), who
+tend to respond more slowly -- seniors are used as a fallback, not a
+coequal option, unless clearly the best topical fit. A same-seniority
+secondary tiebreak then prefers whoever currently has fewer actual
+Reviewer 1/2/3 assignments, to spread workload.
+
 Usage:
     python suggest_reviewers.py                  # fill blank AISuggestedReviewers cells only
     python suggest_reviewers.py --force           # recompute every paper's suggestions
@@ -92,6 +100,32 @@ def build_own_submission_index(sub_ws, sub_col: dict[str, int]) -> list[dict]:
     return papers
 
 
+def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict]) -> dict[str, int]:
+    """How many papers each reviewer is *actually* assigned to (Reviewer
+    1/2/3 filled in) right now -- their real current workload, as opposed
+    to how many times they've been *suggested*. Used as a ranking
+    tiebreak: prefer whoever has fewer assignments so far.
+    """
+    assigned_names = []
+    for r in range(2, sub_ws.max_row + 1):
+        if not sub_ws.cell(r, sub_col["Title"]).value:
+            continue
+        if not sub_ws.cell(r, sub_col["paper"]).value:
+            continue
+        for c in ("Reviewer 1", "Reviewer 2", "Reviewer 3"):
+            val = sub_ws.cell(r, sub_col[c]).value
+            if val and str(val).strip():
+                assigned_names.append(str(val).strip())
+
+    counts = {c["name"]: 0 for c in pool}
+    for assigned in assigned_names:
+        for name in counts:
+            if names_match(name, assigned):
+                counts[name] += 1
+                break
+    return counts
+
+
 _SUGGESTION_LINE_RE = re.compile(r"^\s*\d+\.\s*(.+?)(?:\s+--\s+.*)?\s*$")
 
 
@@ -125,7 +159,8 @@ def pick_reviewers(title: str, keywords: str, abstract: str,
     for i, c in enumerate(candidates):
         line = (f"{i+1}. {c['name']} -- {c['position'] or 'position unknown'} "
                 f"({c['affiliation'] or 'affiliation unknown'}). "
-                f"Interests: {c['interests'] or 'unknown'}")
+                f"Interests: {c['interests'] or 'unknown'}. "
+                f"Currently assigned to review {c.get('assigned_count', 0)} paper(s).")
         if c.get("own_papers"):
             own = "; ".join(
                 f"\"{p['title']}\" (keywords: {p['keywords'] or 'n/a'})"
@@ -145,24 +180,35 @@ Abstract: {abstract}
 CANDIDATE REVIEWERS (numbered list; you may ONLY choose from this list):
 {listing}
 
-Pick the {top_n} candidates whose research interests/position best match this
-paper's topic. Topical fit comes first. When a candidate's stated Interests
-are unknown/thin but they are listed as a {CONFERENCE_NAME} author on a paper
-covering a related topic, treat that paper's title/keywords as a strong
-signal of their expertise too.
+First, narrow to candidates who are a *reasonable* topical fit for this
+paper -- their stated Interests (or, if those are unknown/thin, a related
+paper they themselves authored for {CONFERENCE_NAME}, shown below) should
+plausibly connect to this paper's topic. Don't include someone with no
+plausible connection just to satisfy a preference below -- fit is a
+requirement, not just a preference.
 
-Among candidates with comparably good topical fit, prefer ones more likely
-to actually respond to and complete a review request -- PhD students,
-postdocs, and assistant/associate professors -- over senior
-leadership/administrative roles (dean, vice dean, department head/chair,
-director, provost, president, CEO, or a named/distinguished/endowed chair
-professorship), who tend to be busier and slower to respond. Do not let
-this seniority preference override a clearly better topical match, and
-don't penalize a senior person who is genuinely the best topical fit --
-use it only as a tiebreaker.
+Among that reasonably-fitting group, rank using these priorities, in order:
+1. PRIMARY: prefer early-career / junior reviewers -- PhD students,
+   postdocs, and assistant/associate professors -- over senior
+   leadership/administrative roles (dean, vice dean, department
+   head/chair, director, provost, president, CEO, or a
+   named/distinguished/endowed chair professorship). Junior researchers
+   typically respond to and complete review requests fast; senior people
+   in those roles are usually stretched thin with editorial boards and
+   other service commitments. Only include a senior/leadership candidate
+   when they are clearly and substantially the best topical match and no
+   reasonably-fitting junior/early-career candidate covers this topic --
+   seniors are a fallback, not a coequal option.
+2. SECONDARY, among candidates of similar seniority tier and topical fit:
+   prefer whoever is currently assigned to review fewer papers (see
+   "Currently assigned to N paper(s)" above), to spread the actual review
+   workload instead of piling more onto people already reviewing several.
+3. A clearly superior topical match still wins over a weaker one even if
+   it means picking someone more senior or busier -- these priorities
+   break ties and near-ties, they don't override an obviously better fit.
 
 Reply with ONLY a JSON array of exactly {top_n} objects (fewer only if the
-list has fewer candidates), ranked best-fit first:
+list has fewer reasonably-fitting candidates), ranked best-fit first:
 [{{"name": "<exact name as listed above>", "reason": "<one short clause, <12 words>"}}]"""
 
     reply = ollama_chat([{"role": "user", "content": prompt}])
@@ -229,6 +275,7 @@ def main() -> None:
         raise SystemExit("ReviewerList has no reviewers to suggest from.")
 
     all_papers = build_own_submission_index(sub_ws, sub_col)
+    assignment_counts = build_assignment_counts(sub_ws, sub_col, pool)
 
     todo = []
     for r in range(2, sub_ws.max_row + 1):
@@ -288,7 +335,8 @@ def main() -> None:
                 continue
             if args.max_per_reviewer > 0 and suggestion_counts[c["name"]] >= args.max_per_reviewer:
                 continue
-            c = dict(c, own_papers=own_papers_for(c["name"], all_papers, exclude_row=r))
+            c = dict(c, own_papers=own_papers_for(c["name"], all_papers, exclude_row=r),
+                     assigned_count=assignment_counts.get(c["name"], 0))
             candidates.append(c)
 
         print(f"[{i}/{len(todo)}] #{sub_ws.cell(r, sub_col['Title']).value and r} {title[:60]!r} "

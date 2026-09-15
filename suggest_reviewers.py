@@ -1,7 +1,9 @@
 """Populate the AISuggestedReviewers column on the Submissions sheet: for
 each paper, ask an LLM to pick the best-matching reviewers from
-ReviewerList, automatically excluding the paper's own authors (and anyone
-already entered as Reviewer 1/2/3 for that paper).
+ReviewerList, automatically excluding the paper's own authors, anyone
+already entered as Reviewer 1/2/3 for that paper, and (if the workbook has
+an Assignments sheet -- an invitation log, e.g. exported from EasyChair)
+anyone already invited for that paper regardless of their response.
 
 A reviewer is also dropped from consideration once they've been suggested
 --max-per-reviewer times (default 5) across the whole run, so suggestions
@@ -16,7 +18,8 @@ senior leadership/administrative roles (dean/chair/director/etc.), who
 tend to respond more slowly -- seniors are used as a fallback, not a
 coequal option, unless clearly the best topical fit. A same-seniority
 secondary tiebreak then prefers whoever currently has fewer actual
-Reviewer 1/2/3 assignments, to spread workload.
+assignments, to spread workload -- counted from the Assignments sheet
+(non-declined invitations) when present, else from Reviewer 1/2/3.
 
 Usage:
     python suggest_reviewers.py                  # fill blank AISuggestedReviewers cells only
@@ -45,7 +48,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, llm_chat,
-                    extract_json, split_authors, names_match, start_logging, sync_review_counts)
+                    extract_json, split_authors, names_match, start_logging, sync_review_counts,
+                    load_assignments)
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -100,12 +104,29 @@ def build_own_submission_index(sub_ws, sub_col: dict[str, int]) -> list[dict]:
     return papers
 
 
-def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict]) -> dict[str, int]:
-    """How many papers each reviewer is *actually* assigned to (Reviewer
-    1/2/3 filled in) right now -- their real current workload, as opposed
-    to how many times they've been *suggested*. Used as a ranking
-    tiebreak: prefer whoever has fewer assignments so far.
+def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict],
+                             assignment_records: list[dict]) -> dict[str, int]:
+    """How many papers each reviewer is *actually* assigned to right now --
+    their real current workload, as opposed to how many times they've been
+    *suggested*. Used as a ranking tiebreak: prefer whoever has fewer
+    assignments so far.
+
+    Prefers the Assignments sheet (real invitation log; non-declined
+    entries only) when it's present and has records; falls back to
+    counting Reviewer 1/2/3 otherwise.
     """
+    counts = {c["name"]: 0 for c in pool}
+
+    if assignment_records:
+        for rec in assignment_records:
+            if rec["declined"]:
+                continue
+            for name in counts:
+                if names_match(name, rec["name"]):
+                    counts[name] += 1
+                    break
+        return counts
+
     assigned_names = []
     for r in range(2, sub_ws.max_row + 1):
         if not sub_ws.cell(r, sub_col["Title"]).value:
@@ -117,13 +138,24 @@ def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict]) -
             if val and str(val).strip():
                 assigned_names.append(str(val).strip())
 
-    counts = {c["name"]: 0 for c in pool}
     for assigned in assigned_names:
         for name in counts:
             if names_match(name, assigned):
                 counts[name] += 1
                 break
     return counts
+
+
+def build_already_invited(assignment_records: list[dict]) -> dict[str, list[str]]:
+    """Submission # (str) -> names of everyone who already has ANY
+    Assignments entry for that paper (any status -- accepted, denied,
+    pending, whatever), so they don't get suggested again for a paper
+    they've already been asked about.
+    """
+    by_submission: dict[str, list[str]] = {}
+    for rec in assignment_records:
+        by_submission.setdefault(rec["submission"], []).append(rec["name"])
+    return by_submission
 
 
 _SUGGESTION_LINE_RE = re.compile(r"^\s*\d+\.\s*(.+?)(?:\s+--\s+.*)?\s*$")
@@ -275,7 +307,12 @@ def main() -> None:
         raise SystemExit("ReviewerList has no reviewers to suggest from.")
 
     all_papers = build_own_submission_index(sub_ws, sub_col)
-    assignment_counts = build_assignment_counts(sub_ws, sub_col, pool)
+    assignment_records = load_assignments(wb)
+    assignment_counts = build_assignment_counts(sub_ws, sub_col, pool, assignment_records)
+    already_invited_by_submission = build_already_invited(assignment_records)
+    if assignment_records:
+        print(f"Found an Assignments sheet with {len(assignment_records)} invitation record(s) -- "
+              f"using it for workload counts and to avoid re-suggesting already-invited reviewers.")
 
     todo = []
     for r in range(2, sub_ws.max_row + 1):
@@ -328,7 +365,13 @@ def main() -> None:
             if sub_ws.cell(r, sub_col[c]).value
         ]
 
-        excluded_names = paper_authors + already_assigned
+        already_invited = []
+        if "#" in sub_col:
+            sub_num = sub_ws.cell(r, sub_col["#"]).value
+            if sub_num is not None:
+                already_invited = already_invited_by_submission.get(str(sub_num).strip(), [])
+
+        excluded_names = paper_authors + already_assigned + already_invited
         candidates = []
         for c in pool:
             if any(names_match(c["name"], ex) for ex in excluded_names):

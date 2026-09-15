@@ -1,16 +1,17 @@
 # Reviewer recommendation tools
 
-Three scripts for conference track chairs: one fills in each reviewer's
+Four scripts for conference track chairs: one adds this year's submission
+authors as candidate reviewers, one fills in each reviewer's
 Position/Interests/Website from a web search, one uses that (plus each
 paper's Keywords/Abstract) to suggest well-matched, non-conflicted, load-
 balanced reviewers for every submission, and one keeps a live
 "how many reviews is this person already on" count.
 
 Works on any conference's spreadsheet as long as it matches the format
-below -- nothing here is tied to a specific conference. Both scripts are
-safe to re-run: they only fill in blank cells unless you pass `--force`,
-so adding a handful of new papers/reviewers and re-running only does work
-for the new rows.
+below -- nothing here is tied to a specific conference. All of them are
+safe to re-run: they only fill in blank cells (or add missing rows)
+unless you pass `--force`, so adding a handful of new papers/reviewers
+and re-running only does work for the new rows.
 
 Every run also writes its own timestamped, numbered log
 (`logs/<script>_run<N>_<timestamp>.log`) to a `logs/` folder next to this
@@ -57,6 +58,28 @@ case-sensitive):
 
 Extra columns anywhere are ignored, so you can keep whatever else you
 already track (notes, review-request dates, etc.).
+
+**Two optional sheets**, used automatically if present (everything above
+works fine without them too):
+
+- **`Authorlist`** -- one row per (submission, author) pair: `Submission
+  #`, `First name`, `Last name`, `Email`, `Affiliation`, and optionally
+  `Web page`, `Corresponding?`. This is the shape EasyChair-style exports
+  use. `import_authors.py` reads this to add missing authors to
+  `ReviewerList` as candidate reviewers.
+- **`Assignments`** -- one row per reviewer invitation: `#` (matches
+  Submissions' `#`), `Subreviewer` (`"Name <email>"`), and `Status` (free
+  text; only `"denied"`/`"declined"`/`"rejected"` are treated as a
+  decline, case-insensitive -- anything else, e.g. `"accepted"`,
+  `"submission not accessed"`, counts as active). Also EasyChair-shaped.
+  When present, `suggest_reviewers.py` uses it instead of Reviewer 1/2/3
+  to (a) never re-suggest someone already invited for that specific paper
+  regardless of their response, and (b) compute real current workload
+  (non-declined invitation count) for the ranking tiebreak -- both
+  meaningfully more accurate than Reviewer 1/2/3, which many workflows
+  never actually fill in. If your export has a repeated "Status" header
+  (some do -- one column the actual status, the next its date), the
+  *first* one is used; this is handled automatically.
 
 ## One-time setup
 
@@ -222,7 +245,26 @@ co-chair who wants to run these scripts:
 Handover to next year's co-chairs is the same process, pointed at a new
 (or reshared) Sheet -- nothing to migrate beyond that.
 
-## 1. `enrich_reviewers.py` -- fill in Position / Interests / Website
+## 1. `import_authors.py` -- add this year's authors as candidate reviewers
+
+Only does anything if the workbook has an `Authorlist` sheet (see above).
+For each unique person there (deduped by exact email match, then fuzzy
+name match -- handles the same person appearing on multiple submissions,
+or with inconsistent formatting like "Dr. Hadi Karimikia" vs. "Hadi
+Karimikia") not already in `ReviewerList`, adds a new row with
+Author/Email/Affiliation prefilled (and Website too, from Authorlist's
+`Web page` column, if present) -- Position/Interests are left blank for
+`enrich_reviewers.py` to fill in next.
+
+```
+python import_authors.py             # add missing authors
+python import_authors.py --dry-run   # see who would be added, without writing
+```
+
+Run this first, before `enrich_reviewers.py`, whenever you've imported a
+new submissions export with new authors.
+
+## 2. `enrich_reviewers.py` -- fill in Position / Interests / Website
 
 For every reviewer on the `ReviewerList` sheet with all three columns blank,
 this web-searches their name + affiliation, then asks the model to extract
@@ -245,13 +287,15 @@ stops with a clear message instead of hanging -- just re-run it a bit
 later (or the next day, if it's a daily quota) and it'll pick up where it
 left off.
 
-## 2. `suggest_reviewers.py` -- populate AISuggestedReviewers
+## 3. `suggest_reviewers.py` -- populate AISuggestedReviewers
 
 For every submitted paper with a blank `AISuggestedReviewers` cell, this:
 
 - Parses the `Authors` field and excludes anyone on that list (plus anyone
-  already in `Reviewer 1/2/3`) from the candidate pool -- co-authors are
-  never suggested to review their own paper.
+  already in `Reviewer 1/2/3`, and -- if there's an `Assignments` sheet --
+  anyone already invited for that specific paper, any status) from the
+  candidate pool -- co-authors never get suggested to review their own
+  paper, and already-contacted reviewers don't get suggested again.
 - Sends the paper's Title/Keywords/Abstract plus the remaining candidates'
   Position/Interests to the model and asks it to rank the best-fit
   reviewers, choosing only from that candidate list (so it can't suggest
@@ -328,13 +372,15 @@ it's a different number from `No_reviews_assigned`, which counts how many
 papers a reviewer is *actually assigned* to (Reviewer 1/2/3). Being
 suggested doesn't use up review capacity; being assigned does.
 
-## 3. `update_review_counts.py` -- keep No_reviews_assigned in sync
+## 4. `update_review_counts.py` -- keep No_reviews_assigned in sync
 
 Writes a live Excel formula into each reviewer's `No_reviews_assigned`
-cell: `=COUNTIF(Submissions!<Reviewer 1 col>,...)` summed across Reviewer
-1/2/3. Because it's a formula, not a static number, it recalculates
-*itself* in Excel the instant a track chair types a name into Reviewer
-1/2/3 -- there's nothing to re-run after every assignment.
+cell. If there's an `Assignments` sheet, it's a `COUNTIFS` over non-
+declined invitations there (the more accurate source); otherwise it's a
+`COUNTIF` summed across Reviewer 1/2/3. Because it's a formula, not a
+static number, it recalculates *itself* in Excel/Sheets the instant the
+underlying data changes -- there's nothing to re-run after every
+assignment.
 
 ```
 python update_review_counts.py

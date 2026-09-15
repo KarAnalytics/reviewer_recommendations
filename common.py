@@ -495,9 +495,19 @@ def split_authors(authors_field: str) -> list[str]:
     return [p for p in parts if p]
 
 
+_HONORIFIC_RE = re.compile(
+    r"^(dr|prof|professor|mr|mrs|ms|miss)\.?\s+", flags=re.IGNORECASE
+)
+
+
 def normalize_name(name: str) -> str:
     name = re.sub(r"\s+", " ", str(name)).strip().lower()
     name = re.sub(r"[^\w\s'-]", "", name)
+    # Strip a leading honorific so "Dr. Hadi Karimikia" and "Hadi Karimikia"
+    # normalize to the same thing -- common source of accidental duplicates
+    # when merging name lists from different sources (e.g. Authorlist vs.
+    # ReviewerList).
+    name = _HONORIFIC_RE.sub("", name)
     return name
 
 
@@ -521,26 +531,44 @@ REVIEW_COUNT_COLUMN = "No_reviews_assigned"
 _REQUIRED_REVIEWER_SLOT_COLS = ["Reviewer 1", "Reviewer 2", "Reviewer 3"]
 
 
-def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "ReviewerList") -> int:
-    """Write/refresh a live Excel formula in ReviewerList's
-    No_reviews_assigned column (creating the column if it doesn't exist
-    yet) for every reviewer row. The formula COUNTIFs that reviewer's name
-    across Submissions' Reviewer 1/2/3 columns, so it recalculates live in
-    Excel the instant those change -- no script needs to run again unless
-    new reviewer rows get added. Returns how many rows got a formula.
+def _header_map_first_wins(ws) -> dict[str, int]:
+    """Like {cell.value: cell.column for cell in ws[1]}, but keeps the
+    FIRST column when a header label is repeated, not the last. Some
+    exported sheets (e.g. an EasyChair Assignments tab) have two columns
+    both literally labeled "Status" -- one the actual status text, the
+    next one its date -- where a naive dict comprehension would silently
+    resolve "Status" to the wrong (later) column.
+    """
+    header: dict[str, int] = {}
+    for cell in ws[1]:
+        if cell.value:
+            key = str(cell.value).strip()
+            if key not in header:
+                header[key] = cell.column
+    return header
 
-    Silently does nothing (returns 0) if either sheet or the Reviewer
-    1/2/3 / Author columns aren't present, so callers can call this
-    opportunistically without extra guarding.
+
+def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "ReviewerList") -> int:
+    """Write/refresh a live Excel/Sheets formula in ReviewerList's
+    No_reviews_assigned column (creating the column if it doesn't exist
+    yet) for every reviewer row, so it recalculates live -- no script needs
+    to run again unless new reviewer rows get added. Returns how many rows
+    got a formula.
+
+    If an Assignments sheet is present (Submission #, Subreviewer "Name
+    <email>", Status), the formula counts real non-declined invitations
+    there instead of Reviewer 1/2/3 -- Assignments is the more
+    authoritative source when it exists (an actual invitation log),
+    Reviewer 1/2/3 the fallback when it doesn't.
+
+    Silently does nothing (returns 0) if the required sheets/columns
+    aren't present, so callers can call this opportunistically without
+    extra guarding.
     """
     if sub_sheet not in wb.sheetnames or rev_sheet not in wb.sheetnames:
         return 0
     sub_ws = wb[sub_sheet]
     rev_ws = wb[rev_sheet]
-
-    sub_header = {str(c.value).strip(): c.column for c in sub_ws[1] if c.value}
-    if any(c not in sub_header for c in _REQUIRED_REVIEWER_SLOT_COLS):
-        return 0
 
     rev_header = {str(c.value).strip(): c.column for c in rev_ws[1] if c.value}
     if "Author" not in rev_header:
@@ -550,22 +578,92 @@ def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "Rev
     if not count_col:
         count_col = (max(rev_header.values()) if rev_header else 0) + 1
         rev_ws.cell(1, count_col).value = REVIEW_COUNT_COLUMN
-
-    r1, r2, r3 = (get_column_letter(sub_header[c]) for c in _REQUIRED_REVIEWER_SLOT_COLS)
     author_letter = get_column_letter(rev_header["Author"])
+
+    asg_header = {}
+    if ASSIGNMENTS_SHEET in wb.sheetnames:
+        asg_header = _header_map_first_wins(wb[ASSIGNMENTS_SHEET])
+
+    if all(c in asg_header for c in ("Subreviewer", "Status")):
+        sub_letter = get_column_letter(asg_header["Subreviewer"])
+        status_letter = get_column_letter(asg_header["Status"])
+
+        def formula(r: int) -> str:
+            return (
+                f'=COUNTIFS({ASSIGNMENTS_SHEET}!{sub_letter}:{sub_letter},"*"&{author_letter}{r}&"*",'
+                f'{ASSIGNMENTS_SHEET}!{status_letter}:{status_letter},"<>denied")'
+            )
+    else:
+        sub_header = {str(c.value).strip(): c.column for c in sub_ws[1] if c.value}
+        if any(c not in sub_header for c in _REQUIRED_REVIEWER_SLOT_COLS):
+            return 0
+        r1, r2, r3 = (get_column_letter(sub_header[c]) for c in _REQUIRED_REVIEWER_SLOT_COLS)
+
+        def formula(r: int) -> str:
+            return (
+                f"=COUNTIF({sub_sheet}!{r1}:{r1},{author_letter}{r})"
+                f"+COUNTIF({sub_sheet}!{r2}:{r2},{author_letter}{r})"
+                f"+COUNTIF({sub_sheet}!{r3}:{r3},{author_letter}{r})"
+            )
 
     n = 0
     for r in range(2, rev_ws.max_row + 1):
         name = rev_ws.cell(r, rev_header["Author"]).value
         if not name or not str(name).strip():
             continue
-        rev_ws.cell(r, count_col).value = (
-            f"=COUNTIF({sub_sheet}!{r1}:{r1},{author_letter}{r})"
-            f"+COUNTIF({sub_sheet}!{r2}:{r2},{author_letter}{r})"
-            f"+COUNTIF({sub_sheet}!{r3}:{r3},{author_letter}{r})"
-        )
+        rev_ws.cell(r, count_col).value = formula(r)
         n += 1
     return n
+
+
+# ---------------------------------------------------------------------------
+# Assignments sheet (optional) -- an exported reviewer-invitation log, e.g.
+# from EasyChair: Submission #, Subreviewer "Name <email>", PC member,
+# Requested date, Status, Status date. When present, this is a much more
+# authoritative "who's already been asked about this paper, and what's
+# their real current workload" signal than Reviewer 1/2/3, which many
+# workflows never actually fill in.
+# ---------------------------------------------------------------------------
+ASSIGNMENTS_SHEET = "Assignments"
+_DECLINED_STATUSES = {"denied", "declined", "rejected"}
+_SUBREVIEWER_NAME_RE = re.compile(r"^\s*(.+?)\s*<")
+
+
+def load_assignments(wb, assignments_sheet: str = ASSIGNMENTS_SHEET) -> list[dict]:
+    """Returns [] if there's no Assignments sheet -- keeps this entirely
+    optional, so other conferences' workbooks (or this one before it had
+    the tab) work unchanged. Otherwise one dict per row:
+    {"submission": <str, matches Submissions'#>, "name": <plain reviewer
+    name, email/angle-brackets stripped>, "status": <str, lowercased>,
+    "declined": <bool>}.
+    """
+    if assignments_sheet not in wb.sheetnames:
+        return []
+    ws = wb[assignments_sheet]
+    header = _header_map_first_wins(ws)
+    required = ["#", "Subreviewer", "Status"]
+    if any(c not in header for c in required):
+        return []
+
+    records = []
+    for r in range(2, ws.max_row + 1):
+        sub_num = ws.cell(r, header["#"]).value
+        subreviewer = ws.cell(r, header["Subreviewer"]).value
+        status = ws.cell(r, header["Status"]).value
+        if sub_num is None or not subreviewer:
+            continue
+        m = _SUBREVIEWER_NAME_RE.match(str(subreviewer))
+        name = m.group(1).strip() if m else str(subreviewer).strip()
+        if not name:
+            continue
+        status_lc = str(status or "").strip().lower()
+        records.append({
+            "submission": str(sub_num).strip(),
+            "name": name,
+            "status": status_lc,
+            "declined": status_lc in _DECLINED_STATUSES,
+        })
+    return records
 
 
 # ---------------------------------------------------------------------------

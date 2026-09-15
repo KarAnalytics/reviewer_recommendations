@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import argparse
 
-from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, REVIEW_COUNT_COLUMN, load_workbook, sync_review_counts, start_logging
+from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, REVIEW_COUNT_COLUMN, load_workbook,
+                     sync_review_counts, start_logging, describe_workbook_target)
 
 
 def main() -> None:
@@ -51,7 +52,7 @@ def main() -> None:
     print(f"Wrote live '{REVIEW_COUNT_COLUMN}' formulas for {n} reviewer(s).")
     print("This now updates automatically in Excel whenever Reviewer 1/2/3 change --")
     print("re-run this script only after adding new rows to ReviewerList.")
-    print(f"Saved {args.workbook}")
+    print(f"Saved {describe_workbook_target(args.workbook)}")
 
 
 if __name__ == "__main__":

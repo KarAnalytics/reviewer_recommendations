@@ -47,7 +47,7 @@ from collections import Counter
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, llm_chat,
+from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, describe_workbook_target, llm_chat,
                     extract_json, split_authors, names_match, start_logging, sync_review_counts,
                     load_assignments, find_reviewer_slot_columns)
 
@@ -423,7 +423,8 @@ def main() -> None:
 
     wb.save(args.workbook)
     elapsed = time.time() - t0
-    print(f"Done. Saved {args.workbook} ({elapsed:.0f}s, {elapsed/max(len(todo),1):.1f}s/paper avg).")
+    print(f"Done. Saved {describe_workbook_target(args.workbook)} "
+          f"({elapsed:.0f}s, {elapsed/max(len(todo),1):.1f}s/paper avg).")
 
 
 if __name__ == "__main__":

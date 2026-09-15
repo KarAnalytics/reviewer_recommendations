@@ -84,6 +84,15 @@ def load_workbook(path: str | None):
     return openpyxl.load_workbook(path)
 
 
+def describe_workbook_target(workbook_path: str | None) -> str:
+    """Human-readable label for "saved to ..." log lines -- the live
+    Sheet's URL when GOOGLE_SHEET_ID is set (workbook_path is ignored/None
+    in that mode), else the local file path."""
+    if GOOGLE_SHEET_ID:
+        return f"the live Google Sheet (https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID})"
+    return str(workbook_path)
+
+
 def set_cell_fill(ws, row: int, col: int, rgb_hex: str) -> None:
     """Color one cell's background (rgb_hex like "FFC0CB" for pink).
     Works against either backend -- the Google Sheets shim (which queues

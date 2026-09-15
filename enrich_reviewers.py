@@ -26,7 +26,7 @@ import time
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, load_workbook, research_person, start_logging
+from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, load_workbook, research_person, start_logging, describe_workbook_target
 
 SHEET = "ReviewerList"
 SAVE_EVERY = 1  # autosave cadence, so a crash mid-run doesn't lose progress
@@ -120,7 +120,8 @@ def main() -> None:
 
     wb.save(args.workbook)
     elapsed = time.time() - t0
-    print(f"Done. Saved {args.workbook} ({elapsed:.0f}s, {elapsed/max(len(todo),1):.1f}s/reviewer avg).")
+    print(f"Done. Saved {describe_workbook_target(args.workbook)} "
+          f"({elapsed:.0f}s, {elapsed/max(len(todo),1):.1f}s/reviewer avg).")
 
 
 if __name__ == "__main__":

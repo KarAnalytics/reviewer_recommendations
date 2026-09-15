@@ -37,7 +37,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, load_workbook, load_assignments,
-                     load_handling_editors, find_reviewer_slot_columns, set_cell_fill, start_logging)
+                     load_handling_editors, find_reviewer_slot_columns, set_cell_fill, start_logging,
+                     describe_workbook_target)
 
 SUB_SHEET = "Submissions"
 DENIED_FILL = "FFC0CB"  # pink
@@ -153,7 +154,7 @@ def main() -> None:
         return
 
     wb.save(args.workbook)
-    print(f"Saved {args.workbook}")
+    print(f"Saved {describe_workbook_target(args.workbook)}")
 
 
 if __name__ == "__main__":

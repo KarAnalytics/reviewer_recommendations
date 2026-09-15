@@ -340,7 +340,9 @@ For every submitted paper with a blank `AISuggestedReviewers` cell, this:
   also means the exact ordering is inference-time behavior, not a rule
   you can point to in code -- spot-check suggestions periodically rather
   than assuming the ordering is guaranteed.
-- Writes a numbered list (name + one-line reason) into `AISuggestedReviewers`.
+- Writes a numbered list into `AISuggestedReviewers`: name, their email
+  from `ReviewerList` (if there is one) in parentheses, and a one-line
+  reason -- e.g. `1. Jane Doe (jane@example.edu) -- expert in X`.
 - Caps how many *papers* any one reviewer can be suggested for across the
   whole run (default 5, `--max-per-reviewer`) -- once someone hits the
   cap they're dropped from the candidate pool for the rest of the run, so
@@ -395,6 +397,29 @@ Note: `COUNTIF` does an exact (case-insensitive) text match, so a name
 typed into Reviewer 1/2/3 needs to be spelled exactly as it appears in
 `ReviewerList.Author` to be counted -- copying from `AISuggestedReviewers`
 or `ReviewerList` keeps this accurate.
+
+## 5. `sync_assignments.py` -- fill Handling editor / Reviewer 1/2(/3) from Assignments
+
+Only does anything if the workbook has an `Assignments` and/or
+`handlingEditor_assignment` sheet (see above) -- pulls `Handling editor`
+from the latter, and fills blank `Reviewer 1/2(/3)` slots from the
+former: non-declined candidates first (ranked "review added to
+easychair" > "accepted" > "submission accessed" > "submission not
+accessed", written as `"Name (status)"`), then anyone who *denied* fills
+any Reviewer-N slots still blank afterward as `"Name (denied)"` with a
+pink cell fill, so a declined reviewer stays visible on that paper
+(rather than disappearing) as a reminder not to re-invite them elsewhere.
+
+**Never overwrites a cell that already has something in it** (manual
+edits included) -- only fills genuinely blank cells, so it's always safe
+to re-run, including after co-chairs have started filling things in by
+hand.
+
+```
+python sync_assignments.py
+python sync_assignments.py --dry-run          # see what would change first
+python sync_assignments.py --max-reviewers 2  # cap how many non-declined slots get filled (default: all available Reviewer-N columns)
+```
 
 ## Notes
 

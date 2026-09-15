@@ -49,7 +49,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, llm_chat,
                     extract_json, split_authors, names_match, start_logging, sync_review_counts,
-                    load_assignments)
+                    load_assignments, find_reviewer_slot_columns)
 
 SUB_SHEET = "Submissions"
 REV_SHEET = "ReviewerList"
@@ -78,6 +78,7 @@ def load_reviewer_pool(ws, col: dict[str, int]) -> list[dict]:
             "position": str(ws.cell(r, col["Position"]).value or "").strip(),
             "interests": str(ws.cell(r, col["Interests"]).value or "").strip(),
             "affiliation": str(ws.cell(r, col["Affiliation"]).value or "").strip(),
+            "email": str(ws.cell(r, col["Email"]).value or "").strip() if "Email" in col else "",
         })
     return pool
 
@@ -104,8 +105,8 @@ def build_own_submission_index(sub_ws, sub_col: dict[str, int]) -> list[dict]:
     return papers
 
 
-def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict],
-                             assignment_records: list[dict]) -> dict[str, int]:
+def build_assignment_counts(sub_ws, sub_col: dict[str, int], reviewer_slots: dict[str, int],
+                             pool: list[dict], assignment_records: list[dict]) -> dict[str, int]:
     """How many papers each reviewer is *actually* assigned to right now --
     their real current workload, as opposed to how many times they've been
     *suggested*. Used as a ranking tiebreak: prefer whoever has fewer
@@ -113,7 +114,10 @@ def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict],
 
     Prefers the Assignments sheet (real invitation log; non-declined
     entries only) when it's present and has records; falls back to
-    counting Reviewer 1/2/3 otherwise.
+    counting Reviewer 1/2/3 otherwise (reviewer_slots maps "Reviewer 1"
+    etc. to whichever actual column matches -- see
+    common.find_reviewer_slot_columns -- so a renamed header like
+    "Reviewer 3 (use only two per paper)" still works).
     """
     counts = {c["name"]: 0 for c in pool}
 
@@ -133,8 +137,8 @@ def build_assignment_counts(sub_ws, sub_col: dict[str, int], pool: list[dict],
             continue
         if not sub_ws.cell(r, sub_col["paper"]).value:
             continue
-        for c in ("Reviewer 1", "Reviewer 2", "Reviewer 3"):
-            val = sub_ws.cell(r, sub_col[c]).value
+        for col in reviewer_slots.values():
+            val = sub_ws.cell(r, col).value
             if val and str(val).strip():
                 assigned_names.append(str(val).strip())
 
@@ -159,11 +163,13 @@ def build_already_invited(assignment_records: list[dict]) -> dict[str, list[str]
 
 
 _SUGGESTION_LINE_RE = re.compile(r"^\s*\d+\.\s*(.+?)(?:\s+--\s+.*)?\s*$")
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
 
 
 def parse_suggested_names(cell_text) -> list[str]:
     """Pull reviewer names back out of an AISuggestedReviewers cell written
-    by this script (numbered list, optionally "-- reason" per line).
+    by this script (numbered list, optionally "(email)" and/or
+    "-- reason" per line).
     """
     if not cell_text:
         return []
@@ -171,7 +177,8 @@ def parse_suggested_names(cell_text) -> list[str]:
     for line in str(cell_text).splitlines():
         m = _SUGGESTION_LINE_RE.match(line)
         if m:
-            names.append(m.group(1).strip())
+            name = _TRAILING_PAREN_RE.sub("", m.group(1)).strip()
+            names.append(name)
     return names
 
 
@@ -293,10 +300,15 @@ def main() -> None:
     rev_ws = wb[REV_SHEET]
 
     sub_col = find_columns(sub_ws, [
-        "Authors", "Title", "paper", "Keywords", "Abstract",
-        "Reviewer 1", "Reviewer 2", "Reviewer 3", "AISuggestedReviewers",
+        "Authors", "Title", "paper", "Keywords", "Abstract", "AISuggestedReviewers",
     ])
     rev_col = find_columns(rev_ws, ["Author", "Affiliation", "Position", "Interests"])
+
+    reviewer_slots = find_reviewer_slot_columns(sub_col)
+    if not reviewer_slots:
+        print("Warning: no 'Reviewer 1/2/3'-style column found on Submissions -- "
+              "already-assigned reviewers won't be excluded via that column "
+              "(Assignments-sheet exclusion, if present, still applies).")
 
     # Keep ReviewerList's No_reviews_assigned formulas in sync (adds the
     # column if missing, fills it down into any newly-added reviewer rows).
@@ -305,10 +317,11 @@ def main() -> None:
     pool = load_reviewer_pool(rev_ws, rev_col)
     if not pool:
         raise SystemExit("ReviewerList has no reviewers to suggest from.")
+    email_by_name = {c["name"]: c["email"] for c in pool}
 
     all_papers = build_own_submission_index(sub_ws, sub_col)
     assignment_records = load_assignments(wb)
-    assignment_counts = build_assignment_counts(sub_ws, sub_col, pool, assignment_records)
+    assignment_counts = build_assignment_counts(sub_ws, sub_col, reviewer_slots, pool, assignment_records)
     already_invited_by_submission = build_already_invited(assignment_records)
     if assignment_records:
         print(f"Found an Assignments sheet with {len(assignment_records)} invitation record(s) -- "
@@ -360,9 +373,9 @@ def main() -> None:
         paper_authors = split_authors(str(authors_field))
 
         already_assigned = [
-            str(sub_ws.cell(r, sub_col[c]).value).strip()
-            for c in ("Reviewer 1", "Reviewer 2", "Reviewer 3")
-            if sub_ws.cell(r, sub_col[c]).value
+            str(sub_ws.cell(r, col).value).strip()
+            for col in reviewer_slots.values()
+            if sub_ws.cell(r, col).value
         ]
 
         already_invited = []
@@ -396,7 +409,8 @@ def main() -> None:
             continue
 
         cell_text = "\n".join(
-            f"{j}. {name}" + (f" -- {reason}" if reason else "")
+            f"{j}. {name}" + (f" ({email_by_name[name]})" if email_by_name.get(name) else "")
+            + (f" -- {reason}" if reason else "")
             for j, (name, reason) in enumerate(picks, 1)
         )
         sub_ws.cell(r, sub_col["AISuggestedReviewers"]).value = cell_text

@@ -83,6 +83,20 @@ def load_workbook(path: str | None):
     import openpyxl
     return openpyxl.load_workbook(path)
 
+
+def set_cell_fill(ws, row: int, col: int, rgb_hex: str) -> None:
+    """Color one cell's background (rgb_hex like "FFC0CB" for pink).
+    Works against either backend -- the Google Sheets shim (which queues
+    it, applied on save()) or a real openpyxl worksheet (applied
+    immediately via PatternFill).
+    """
+    if hasattr(ws, "set_fill"):
+        ws.set_fill(row, col, rgb_hex)
+        return
+    from openpyxl.styles import PatternFill
+    ws.cell(row, col).fill = PatternFill(start_color=rgb_hex, end_color=rgb_hex, fill_type="solid")
+
+
 # Optional context to steer the model's name-collision check and its sense
 # of what "topical fit" means -- set these in .env to tailor the tool to
 # your own conference. Sensible generic defaults work fine without any of
@@ -528,7 +542,6 @@ def names_match(a: str, b: str) -> bool:
 # Review-count sync -- keeps ReviewerList's No_reviews_assigned column live
 # ---------------------------------------------------------------------------
 REVIEW_COUNT_COLUMN = "No_reviews_assigned"
-_REQUIRED_REVIEWER_SLOT_COLS = ["Reviewer 1", "Reviewer 2", "Reviewer 3"]
 
 
 def _header_map_first_wins(ws) -> dict[str, int]:
@@ -546,6 +559,25 @@ def _header_map_first_wins(ws) -> dict[str, int]:
             if key not in header:
                 header[key] = cell.column
     return header
+
+
+_REVIEWER_SLOT_RE = re.compile(r"^\s*Reviewer\s*([123])\b", re.IGNORECASE)
+
+
+def find_reviewer_slot_columns(header: dict[str, int]) -> dict[str, int]:
+    """Map "Reviewer 1"/"Reviewer 2"/"Reviewer 3" to whichever actual
+    column header matches, tolerating extra trailing text -- e.g. a
+    header renamed to "Reviewer 3 (use only two per paper)" still
+    resolves to "Reviewer 3". Takes a header dict as returned by
+    find_columns() (or equivalent); returns only the slots actually
+    found (1, 2, or 3 entries), keyed "Reviewer 1" etc.
+    """
+    slots: dict[str, int] = {}
+    for key, col in header.items():
+        m = _REVIEWER_SLOT_RE.match(key)
+        if m:
+            slots[f"Reviewer {m.group(1)}"] = col
+    return slots
 
 
 def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "ReviewerList") -> int:
@@ -595,15 +627,15 @@ def sync_review_counts(wb, sub_sheet: str = "Submissions", rev_sheet: str = "Rev
             )
     else:
         sub_header = {str(c.value).strip(): c.column for c in sub_ws[1] if c.value}
-        if any(c not in sub_header for c in _REQUIRED_REVIEWER_SLOT_COLS):
+        slots = find_reviewer_slot_columns(sub_header)
+        if not slots:
             return 0
-        r1, r2, r3 = (get_column_letter(sub_header[c]) for c in _REQUIRED_REVIEWER_SLOT_COLS)
+        slot_letters = [get_column_letter(c) for c in slots.values()]
 
         def formula(r: int) -> str:
-            return (
-                f"=COUNTIF({sub_sheet}!{r1}:{r1},{author_letter}{r})"
-                f"+COUNTIF({sub_sheet}!{r2}:{r2},{author_letter}{r})"
-                f"+COUNTIF({sub_sheet}!{r3}:{r3},{author_letter}{r})"
+            return "=" + "+".join(
+                f"COUNTIF({sub_sheet}!{letter}:{letter},{author_letter}{r})"
+                for letter in slot_letters
             )
 
     n = 0
@@ -664,6 +696,37 @@ def load_assignments(wb, assignments_sheet: str = ASSIGNMENTS_SHEET) -> list[dic
             "declined": status_lc in _DECLINED_STATUSES,
         })
     return records
+
+
+# ---------------------------------------------------------------------------
+# handlingEditor_assignment sheet (optional) -- e.g. from EasyChair:
+# Member #, Member Name, Member Role, Submission #.
+# ---------------------------------------------------------------------------
+HANDLING_EDITOR_SHEET = "handlingEditor_assignment"
+
+
+def load_handling_editors(wb, sheet: str = HANDLING_EDITOR_SHEET) -> dict[str, str]:
+    """Submission # (str) -> handling editor/track chair name. Returns {}
+    if the sheet isn't present (keeps this optional). If a submission has
+    more than one row, the first one found wins.
+    """
+    if sheet not in wb.sheetnames:
+        return {}
+    ws = wb[sheet]
+    header = _header_map_first_wins(ws)
+    required = ["Member Name", "Submission #"]
+    if any(c not in header for c in required):
+        return {}
+
+    result: dict[str, str] = {}
+    for r in range(2, ws.max_row + 1):
+        name = ws.cell(r, header["Member Name"]).value
+        sub_num = ws.cell(r, header["Submission #"]).value
+        if not name or sub_num is None:
+            continue
+        key = str(sub_num).strip()
+        result.setdefault(key, str(name).strip())
+    return result
 
 
 # ---------------------------------------------------------------------------

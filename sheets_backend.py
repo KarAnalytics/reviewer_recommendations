@@ -108,6 +108,7 @@ class _GWorksheet:
         # read patterns (mostly: is this blank? what does it say?).
         self._grid: list[list] = gs_worksheet.get_values(value_render_option="FORMULA")
         self._pending: dict[tuple[int, int], object] = {}
+        self._pending_fills: dict[tuple[int, int], str] = {}
 
     @property
     def max_row(self) -> int:
@@ -142,15 +143,34 @@ class _GWorksheet:
     def cell(self, row: int, column: int) -> _GCell:
         return _GCell(self, row, column)
 
+    def set_fill(self, row: int, col: int, rgb_hex: str) -> None:
+        """Queue a background color for one cell (e.g. "FFC0CB" for pink),
+        applied on the next flush()/save()."""
+        self._pending_fills[(row, col)] = rgb_hex
+
     def flush(self) -> None:
-        if not self._pending:
-            return
-        updates = [
-            {"range": gspread.utils.rowcol_to_a1(r, c), "values": [["" if v is None else v]]}
-            for (r, c), v in self._pending.items()
-        ]
-        self._gs.batch_update(updates, value_input_option="USER_ENTERED")
-        self._pending.clear()
+        if self._pending:
+            updates = [
+                {"range": gspread.utils.rowcol_to_a1(r, c), "values": [["" if v is None else v]]}
+                for (r, c), v in self._pending.items()
+            ]
+            self._gs.batch_update(updates, value_input_option="USER_ENTERED")
+            self._pending.clear()
+
+        if self._pending_fills:
+            formats = [
+                {
+                    "range": gspread.utils.rowcol_to_a1(r, c),
+                    "format": {"backgroundColor": {
+                        "red": int(hexcolor[0:2], 16) / 255,
+                        "green": int(hexcolor[2:4], 16) / 255,
+                        "blue": int(hexcolor[4:6], 16) / 255,
+                    }},
+                }
+                for (r, c), hexcolor in self._pending_fills.items()
+            ]
+            self._gs.batch_format(formats)
+            self._pending_fills.clear()
 
 
 class GoogleSheetWorkbook:

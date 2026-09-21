@@ -298,6 +298,17 @@ For every submitted paper with a blank `AISuggestedReviewers` cell, this:
   anyone already invited for that specific paper, any status) from the
   candidate pool -- co-authors never get suggested to review their own
   paper, and already-contacted reviewers don't get suggested again.
+- Same-institution conflict of interest: for each author who also has a
+  `ReviewerList` entry, that entry's email domain is looked up and any
+  candidate sharing it (or a sub/parent domain of it, e.g. `dokt.p.lodz.pl`
+  vs. `p.lodz.pl`) is excluded for that paper, so reviewers don't get
+  suggested for papers from their own institution.
+- `EXCLUDED_REVIEWER_DOMAINS` in `.env` (comma-separated) blocks specific
+  email domains from *every* suggestion, persistently across runs -- e.g.
+  if one co-chair already personally handles reviewers from their own
+  institution, other co-chairs running this script won't have that
+  institution's reviewers suggested to them either. `--exclude-domain`
+  adds more domains for just that one run, on top of `.env`.
 - Sends the paper's Title/Keywords/Abstract plus the remaining candidates'
   Position/Interests to the model and asks it to rank the best-fit
   reviewers, choosing only from that candidate list (so it can't suggest
@@ -362,6 +373,7 @@ python suggest_reviewers.py             # default: top 5 per paper
 python suggest_reviewers.py --top-n 3
 python suggest_reviewers.py --max-per-reviewer 8
 python suggest_reviewers.py --limit 2   # try it on 2 papers first
+python suggest_reviewers.py --exclude-domain example.edu,other.org
 ```
 
 Run this again whenever you add new papers -- it'll only compute

@@ -113,6 +113,30 @@ def set_cell_fill(ws, row: int, col: int, rgb_hex: str) -> None:
 CONFERENCE_NAME = os.environ.get("CONFERENCE_NAME", "").strip() or "this conference"
 CONFERENCE_FIELD = os.environ.get("CONFERENCE_FIELD", "").strip() or "this conference's field"
 
+# Optional, persistent: email domains suggest_reviewers.py should never
+# suggest at all (e.g. an institution a specific co-chair already handles
+# reviewers from personally). Comma-separated in .env; --exclude-domain
+# on the command line adds to this, doesn't replace it.
+EXCLUDED_REVIEWER_DOMAINS = {
+    d.strip().lower() for d in os.environ.get("EXCLUDED_REVIEWER_DOMAINS", "").split(",") if d.strip()
+}
+
+
+def email_domain(email: str) -> str:
+    email = (email or "").strip().lower()
+    return email.split("@", 1)[1] if "@" in email else ""
+
+
+def domains_match(a: str, b: str) -> bool:
+    """True if two email domains are the same institution -- exact match, or
+    one is a subdomain of the other (e.g. "dokt.p.lodz.pl" and "p.lodz.pl",
+    or "cs.example.edu" and "example.edu"), which is common for university
+    departments/programs sharing a parent domain."""
+    a, b = (a or "").strip().lower(), (b or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a.endswith("." + b) or b.endswith("." + a)
+
 
 # ---------------------------------------------------------------------------
 # Ollama chat (local app -- already signed in, no API key needed)

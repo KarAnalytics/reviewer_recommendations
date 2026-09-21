@@ -1,9 +1,13 @@
 """Populate the AISuggestedReviewers column on the Submissions sheet: for
 each paper, ask an LLM to pick the best-matching reviewers from
 ReviewerList, automatically excluding the paper's own authors, anyone
-already entered as Reviewer 1/2/3 for that paper, and (if the workbook has
-an Assignments sheet -- an invitation log, e.g. exported from EasyChair)
-anyone already invited for that paper regardless of their response.
+sharing an author's email domain (same-institution conflict of interest --
+looked up from the authors' own ReviewerList entries, when they have
+one), anyone already entered as Reviewer 1/2/3 for that paper, and (if the
+workbook has an Assignments sheet -- an invitation log, e.g. exported
+from EasyChair) anyone already invited for that paper regardless of their
+response. EXCLUDED_REVIEWER_DOMAINS in .env (or --exclude-domain) also
+blocks specific domains from every suggestion, persistently.
 
 A reviewer is also dropped from consideration once they've been suggested
 --max-per-reviewer times (default 5) across the whole run, so suggestions
@@ -26,6 +30,7 @@ Usage:
     python suggest_reviewers.py --force           # recompute every paper's suggestions
     python suggest_reviewers.py --top-n 5         # how many reviewers to suggest (default 5)
     python suggest_reviewers.py --max-per-reviewer 5  # suggestion cap per reviewer (default 5)
+    python suggest_reviewers.py --exclude-domain example.edu,other.org
     python suggest_reviewers.py --workbook path\to\file.xlsx
 
 Run this any time you add new papers (or re-run enrich_reviewers.py) --
@@ -47,7 +52,8 @@ from collections import Counter
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, load_workbook, describe_workbook_target, llm_chat,
+from common import (WORKBOOK_PATH, GOOGLE_SHEET_ID, CONFERENCE_NAME, EXCLUDED_REVIEWER_DOMAINS,
+                    email_domain, domains_match, load_workbook, describe_workbook_target, llm_chat,
                     extract_json, split_authors, names_match, start_logging, sync_review_counts,
                     load_assignments, find_reviewer_slot_columns)
 
@@ -289,7 +295,15 @@ def main() -> None:
     ap.add_argument("--max-per-reviewer", type=int, default=5,
                      help="drop a reviewer from consideration once they've been suggested "
                           "this many times across the run (default 5); 0 disables the cap")
+    ap.add_argument("--exclude-domain", default="",
+                     help="comma-separated email domain(s) to never suggest, in addition to "
+                          "EXCLUDED_REVIEWER_DOMAINS in .env (e.g. example.edu)")
     args = ap.parse_args()
+
+    excluded_domains = set(EXCLUDED_REVIEWER_DOMAINS)
+    excluded_domains |= {d.strip().lower() for d in args.exclude_domain.split(",") if d.strip()}
+    if excluded_domains:
+        print(f"Excluding reviewer domain(s): {', '.join(sorted(excluded_domains))}")
 
     wb = load_workbook(args.workbook)
     for sheet in (SUB_SHEET, REV_SHEET):
@@ -385,9 +399,25 @@ def main() -> None:
                 already_invited = already_invited_by_submission.get(str(sub_num).strip(), [])
 
         excluded_names = paper_authors + already_assigned + already_invited
+
+        # Same-institution conflict of interest: any author's email domain
+        # (looked up from their own ReviewerList entry, when they have
+        # one -- authors are frequently also candidate reviewers) is
+        # off-limits for this paper too, not just the author by name.
+        author_domains = {
+            email_domain(c["email"])
+            for c in pool
+            if c["email"] and any(names_match(c["name"], a) for a in paper_authors)
+        }
+        author_domains.discard("")
+
         candidates = []
         for c in pool:
             if any(names_match(c["name"], ex) for ex in excluded_names):
+                continue
+            dom = email_domain(c["email"])
+            if dom and (any(domains_match(dom, ed) for ed in excluded_domains)
+                        or any(domains_match(dom, ad) for ad in author_domains)):
                 continue
             if args.max_per_reviewer > 0 and suggestion_counts[c["name"]] >= args.max_per_reviewer:
                 continue

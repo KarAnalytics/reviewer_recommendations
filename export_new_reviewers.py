@@ -8,6 +8,16 @@ match (same logic used everywhere else in these scripts), so formatting
 differences between the two sources don't produce false "missing"
 entries.
 
+The new tab's first column is pre-formatted to EasyChair's own bulk
+"add subreviewers" syntax -- one line per person,
+`FirstName LastName <email>`, with a name part double-quoted if it's more
+than one word, and an empty first name written as `""` -- so you can just
+select that whole column and paste it into EasyChair's import box. Name
+splitting uses "last word = last name, everything before it = first
+name," which is right for the vast majority of names but can't always
+guess a genuinely multi-word *last* name (e.g. "Navarro Perez") --
+spot-check unusual names before pasting.
+
 The new tab is fully replaced each run (not appended to), so it's safe
 to re-run against a fresher EasyChair export later -- it always reflects
 the current comparison, not an accumulation of past runs.
@@ -32,6 +42,32 @@ from common import WORKBOOK_PATH, GOOGLE_SHEET_ID, load_workbook, names_match, s
 
 REV_SHEET = "ReviewerList"
 DEFAULT_NEW_SHEET_NAME = "New Reviewers"
+
+
+def split_first_last(full_name: str) -> tuple[str, str]:
+    """"Zhenhui Jack Jiang" -> ("Zhenhui Jack", "Jiang"); "Simon" -> ("", "Simon").
+    Last word = last name, everything before it = first name -- the usual
+    convention, though it can't distinguish a genuinely multi-word last
+    name (no way to tell from a single combined-name string alone)."""
+    parts = full_name.strip().split()
+    if len(parts) <= 1:
+        return "", full_name.strip()
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _easychair_token(part: str) -> str:
+    if not part:
+        return '""'
+    if " " in part:
+        return f'"{part}"'
+    return part
+
+
+def easychair_import_line(full_name: str, email: str) -> str:
+    """EasyChair's bulk "add subreviewers" syntax: FirstName LastName
+    <email>, multi-word name parts double-quoted, empty first name as ""."""
+    first, last = split_first_last(full_name)
+    return f"{_easychair_token(first)} {_easychair_token(last)} <{email}>"
 
 
 def find_columns(ws, required: list[str]) -> dict[str, int]:
@@ -128,9 +164,10 @@ def main() -> None:
     if args.sheet_name in ec_wb.sheetnames:
         del ec_wb[args.sheet_name]
     new_ws = ec_wb.create_sheet(args.sheet_name)
-    new_ws.append(["Name", "Email", "Affiliation", "Position", "Interests"])
+    new_ws.append(["EasyChair import line", "Name", "Email", "Affiliation", "Position", "Interests"])
     for m in missing:
-        new_ws.append([m["name"], m["email"], m["affiliation"], m["position"], m["interests"]])
+        import_line = easychair_import_line(m["name"], m["email"]) if m["email"] else ""
+        new_ws.append([import_line, m["name"], m["email"], m["affiliation"], m["position"], m["interests"]])
 
     ec_wb.save(args.easychair_file)
     print(f"\nWrote {len(missing)} reviewer(s) to sheet {args.sheet_name!r} in {args.easychair_file}")

@@ -428,12 +428,19 @@ python sync_assignments.py --max-reviewers 2  # cap how many non-declined slots 
 Compares our `ReviewerList` against an external EasyChair reviewer-pool
 export (a separate `.xlsx` with `Name`/`Email` columns on its first
 sheet, plus whatever stats columns EasyChair adds) and writes everyone
-who's in ours but not in theirs into a new tab in *that* file -- ready to
-hand back to EasyChair to register as reviewers/PC members. Matches by
+who's in ours but not in theirs into a new tab in *that* file. Matches by
 email first, then fuzzy name, so formatting differences between the two
 sources don't produce false positives. Fully replaces the tab each run
 (not append-only), so it's safe to re-run against a fresher EasyChair
 export later.
+
+The new tab's first column, `EasyChair import line`, is pre-formatted to
+EasyChair's own bulk "add subreviewers" syntax (`FirstName LastName
+<email>`, multi-word name parts double-quoted, empty first name as `""`)
+-- select that whole column and paste it straight into EasyChair's import
+box. Name-splitting assumes the last word is the last name, which is
+right for almost everyone but can't always guess a genuinely multi-word
+*last* name -- worth a glance over unusual names before pasting.
 
 ```
 python export_new_reviewers.py --easychair-file "C:\path\to\EasyChair_pool.xlsx"

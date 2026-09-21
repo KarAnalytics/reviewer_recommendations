@@ -1,11 +1,13 @@
 # Reviewer recommendation tools
 
-Four scripts for conference track chairs: one adds this year's submission
-authors as candidate reviewers, one fills in each reviewer's
-Position/Interests/Website from a web search, one uses that (plus each
-paper's Keywords/Abstract) to suggest well-matched, non-conflicted, load-
-balanced reviewers for every submission, and one keeps a live
-"how many reviews is this person already on" count.
+A small toolkit for conference track chairs: scripts to add this year's
+submission authors as candidate reviewers, enrich each reviewer's
+Position/Interests/Website from a web search, suggest well-matched,
+non-conflicted, load-balanced reviewers for every submission, keep a live
+"how many reviews is this person already on" count, sync assignment/
+editor data in from an EasyChair-style export, and flag reviewer
+candidates that still need registering in EasyChair. See the numbered
+sections below for each one.
 
 Works on any conference's spreadsheet as long as it matches the format
 below -- nothing here is tied to a specific conference. All of them are
@@ -419,6 +421,24 @@ hand.
 python sync_assignments.py
 python sync_assignments.py --dry-run          # see what would change first
 python sync_assignments.py --max-reviewers 2  # cap how many non-declined slots get filled (default: all available Reviewer-N columns)
+```
+
+## 6. `export_new_reviewers.py` -- flag candidates missing from an EasyChair pool export
+
+Compares our `ReviewerList` against an external EasyChair reviewer-pool
+export (a separate `.xlsx` with `Name`/`Email` columns on its first
+sheet, plus whatever stats columns EasyChair adds) and writes everyone
+who's in ours but not in theirs into a new tab in *that* file -- ready to
+hand back to EasyChair to register as reviewers/PC members. Matches by
+email first, then fuzzy name, so formatting differences between the two
+sources don't produce false positives. Fully replaces the tab each run
+(not append-only), so it's safe to re-run against a fresher EasyChair
+export later.
+
+```
+python export_new_reviewers.py --easychair-file "C:\path\to\EasyChair_pool.xlsx"
+python export_new_reviewers.py --easychair-file ... --dry-run
+python export_new_reviewers.py --easychair-file ... --sheet-name "New Reviewers"
 ```
 
 ## Notes
